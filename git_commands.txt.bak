@@ -1,0 +1,60 @@
+# Git Commands for LLM_Server_Controller Repository
+# ================================================
+
+## Подключение репозитория (выполнено)
+git init
+git remote add origin https://github.com/dmitrymaxs/LLM_Server_Controller
+git fetch origin
+
+## Получение файлов из удаленного репозитория
+
+# Посмотреть файлы в удаленной ветке
+git ls-tree -r --name-only origin/main
+
+# Посмотреть содержимое файла из удаленного репозитория (без добавления)
+git show origin/main:<имя_файла>
+
+# Пример: посмотреть README.md
+git show origin/main:README.md
+
+# Добавить конкретный файл из удаленного репозитория
+git checkout origin/main -- <имя_файла>
+
+# Пример: добавить README.md
+git checkout origin/main -- README.md
+
+# Добавить все файлы из удаленного репозитория
+git checkout -b main --track origin/main
+
+## Добавление файлов в удаленный репозиторий
+
+# Добавить конкретный файл в коммит
+git add <имя_файла>
+
+# Пример: добавить main.py
+git add main.py
+
+# Добавить все файлы (кроме игнорируемых в .gitignore)
+git add .
+
+# Создать коммит
+git commit -m "Описание изменений"
+
+# Отправить изменения в удаленный репозиторий
+git push origin main
+
+# Пример полного цикла:
+# git add main.py
+# git commit -m "Add main.py"
+# git push origin main
+
+## Полезные команды
+
+# Проверить статус
+git status
+
+# Посмотреть историю коммитов
+git log
+
+# Посмотреть разницу между локальными и удаленными изменениями
+git diff origin/main
