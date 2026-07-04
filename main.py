@@ -7,147 +7,25 @@ import tkinter as tk
 import winsound
 from tkinter import scrolledtext, messagebox, filedialog
 
+from params_config import (
+    PARAM_GROUPS,
+    BACKEND_DEVICE_KEYS,
+    build_default_params,
+    normalize_loaded_params,
+)
+
 CONFIG_FILE = "llama_config.json"
 APP_VERSION = "0.1.0"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
+PARAM_GRID_COLUMNS = 4
 
-PARAM_CATEGORIES = {
-    "Основные": {
-        "--ctx-size": {"default": "16384", "type": "int", "desc": "Размер контекстного окна в токенах"},
-        "--n-gpu-layers": {"default": "99", "type": "int", "desc": "Число слоёв на GPU (999 = максимум)"},
-        "--host": {"default": "0.0.0.0", "type": "string", "desc": "Адрес для прослушивания"},
-        "--port": {"default": "18080", "type": "int", "desc": "Порт сервера"},
-    },
-    "Память": {
-        "--no-mmap": {"default": False, "type": "bool", "desc": "Отключить memory mapping"},
-        "--mlock": {"default": False, "type": "bool", "desc": "Закрепить модель в RAM"},
-        "--direct-io": {"default": False, "type": "bool", "desc": "Direct IO при чтении файлов"},
-        "--no-kv-offload": {"default": False, "type": "bool", "desc": "KV Cache только в RAM"},
-        "--no-host": {"default": False, "type": "bool", "desc": "Отключить Host Buffer"},
-        "--cache-type-k": {"default": "q8_0", "type": "string", "desc": "Тип KV Cache K (f32,f16,bf16,q8_0,q4_0...)"},
-        "--cache-type-v": {"default": "q8_0", "type": "string", "desc": "Тип KV Cache V (f32,f16,bf16,q8_0,q4_0...)"},
-    },
-    "CPU": {
-        "--threads": {"default": "0", "type": "int", "desc": "Число потоков CPU (0 = авто)"},
-        "--threads-batch": {"default": "", "type": "int", "desc": "Потоки для Prefill"},
-        "--cpu-mask": {"default": "", "type": "string", "desc": "Маска ядер (например: 1111111100000000)"},
-        "--cpu-range": {"default": "", "type": "string", "desc": "Диапазон ядер (например: 0-15)"},
-        "--cpu-strict": {"default": False, "type": "bool", "desc": "Строгая привязка к ядрам"},
-        "--numa": {"default": "", "type": "string", "desc": "Режим NUMA (disabled, distribute, isolate)"},
-    },
-    "GPU": {
-        "--device": {"default": "CUDA0", "type": "string", "desc": "Устройство (CUDA0,Vulkan0,HIP0,Metal,SYCL)"},
-        "--split-mode": {"default": "layer", "type": "string", "desc": "Режим разделения (none, layer, row)"},
-        "--tensor-split": {"default": "", "type": "string", "desc": "Пропорции GPU через запятую (4,8)"}, 
-        "--main-gpu": {"default": "0", "type": "int", "desc": "Основная видеокарта"},
-        "--batch-size": {"default": "512", "type": "int", "desc": "Размер Batch (макс токенов за раз)"},
-        "--ubatch-size": {"default": "", "type": "int", "desc": "Micro Batch размер"},
-    },
-    "Контекстное окно": {
-        "--rope-scaling": {"default": "", "type": "string", "desc": "Масштабирование RoPE (none, yarn, linear)"},
-        "--rope-scale": {"default": "", "type": "float", "desc": "Коэффициент масштабирования"},
-        "--yarn-orig-ctx": {"default": "", "type": "int", "desc": "Исходный контекст YaRN"},
-        "--yarn-ext-factor": {"default": "", "type": "float", "desc": "RoPE extention factor"},
-        "--yarn-attn-factor": {"default": "", "type": "float", "desc": "Attention factor"},
-        "--yarn-beta-fast": {"default": "", "type": "float", "desc": "Beta fast для YaRN"},
-        "--yarn-beta-slow": {"default": "", "type": "float", "desc": "Beta slow для YaRN"},
-        "--no-context-shift": {"default": False, "type": "bool", "desc": "Отключить автоматический сдвиг контекста"},
-    },
-    "Flash Attention": {
-        "-fa": {"default": True, "type": "bool", "desc": "Flash Attention (вкл по умолчанию)"},
-        "--no-flash-attn": {"default": False, "type": "bool", "desc": "Отключить Flash Attention"},
-    },
-    "Sampling (Генерация)": {
-        "--temp": {"default": "1.0", "type": "float", "desc": "Температура (0.0-2.0)"},
-        "--top-p": {"default": "0.95", "type": "float", "desc": "Nucleus sampling (0.0-1.0)"},
-        "--top-k": {"default": "64", "type": "int", "desc": "Оставить K токенов"},
-        "--min-p": {"default": "", "type": "float", "desc": "Минимальная вероятность"},
-        "--typical": {"default": "", "type": "float", "desc": "Typical sampling"},
-        "--repeat-penalty": {"default": "", "type": "float", "desc": "Штраф за повторения"},
-        "--presence-penalty": {"default": "", "type": "float", "desc": "Штраф за присутствие токенов"},
-        "--frequency-penalty": {"default": "", "type": "float", "desc": "Штраф за частоту токенов"},
-        "--seed": {"default": "-1", "type": "int", "desc": "Seed генератора (-1 = случайный)"},
-        "--samplers": {"default": "", "type": "string", "desc": "Последовательность сэмплеров"},
-    },
-    "Parallel Slots": {
-        "--parallel": {"default": "2", "type": "int", "desc": "Макс одновременных диалогов"},
-    },
-    "Speculative Decoding": {
-        "--spec-type": {"default": "", "type": "string", "desc": "Тип speculative decoding"},
-        "--spec-draft-n-max": {"default": "6", "type": "int", "desc": "Макс черновых токенов"},
-        "-ncmoe": {"default": "", "type": "string", "desc": "Эксперты MoE моделей"},
-    }
-}
-
-class CollapsibleSection:
-    def __init__(self, parent, title, params, param_entries):
-        self.parent = parent
-        self.title = title
-        self.params = params
-        self.param_entries = param_entries
-        self.is_open = title in ("Основные", "Sampling (Генерация)")
-        
-        self.frame = tk.Frame(parent)
-        self.frame.pack(fill=tk.X, padx=10, pady=2)
-        
-        self.header = tk.Frame(self.frame, cursor="hand2")
-        self.header.pack(fill=tk.X)
-        
-        self.toggle_btn = tk.Label(self.header, text="▶" if not self.is_open else "▼", font=("Arial", 10, "bold"), width=3)
-        self.toggle_btn.pack(side=tk.LEFT)
-        
-        self.title_label = tk.Label(self.header, text=title, font=("Arial", 10, "bold"))
-        self.title_label.pack(side=tk.LEFT, padx=(5, 0))
-        
-        self.header.bind("<Button-1>", self.toggle)
-        self.toggle_btn.bind("<Button-1>", self.toggle)
-        
-        self.content_frame = tk.Frame(self.frame)
-        
-        if self.is_open:
-            self.content_frame.pack(fill=tk.X, padx=20)
-        
-        self.create_params()
-    
-    def toggle(self, event=None):
-        self.is_open = not self.is_open
-        if self.is_open:
-            self.toggle_btn.config(text="▼")
-            self.content_frame.pack(fill=tk.X, padx=20)
-        else:
-            self.toggle_btn.config(text="▶")
-            self.content_frame.pack_forget()
-    
-    def create_params(self):
-        row, col = 0, 0
-        for param, info in self.params.items():
-            if info["type"] == "bool":
-                var = tk.BooleanVar(value=info["default"])
-                chk = tk.Checkbutton(self.content_frame, text=param, variable=var, font=("Arial", 9))
-                chk.grid(row=row, column=col * 2, columnspan=2, sticky=tk.W, padx=5, pady=2)
-                self.param_entries[param] = var
-            else:
-                lbl = tk.Label(self.content_frame, text=f"{param}:", font=("Arial", 9))
-                lbl.grid(row=row, column=col * 2, sticky=tk.W, padx=(5, 2))
-                width = 12 if len(str(info["default"])) > 5 else 10
-                if info["default"] == "":
-                    width = 10
-                ent = tk.Entry(self.content_frame, width=width)
-                ent.insert(0, str(info["default"]))
-                ent.grid(row=row, column=col * 2 + 1, sticky=tk.W, padx=(0, 10), pady=2)
-                self.param_entries[param] = ent
-            
-            col += 1
-            if col > 3:
-                col = 0
-                row += 1
 
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("LLM Server Controller")
-        self.root.geometry("920x760")
+        self.root.geometry("1000x900")
 
         self.process = None
         self.is_running = False
@@ -156,16 +34,19 @@ class LlamaServerGUI:
         self.loading_blink_visible = True
         self.manual_stop_requested = False
         self.log_lines = []
-        self.param_entries = {}
-        self.sections = {}
 
-        self.default_params = {}
-        for cat_params in PARAM_CATEGORIES.values():
-            self.default_params.update(cat_params)
-
+        self.default_params = build_default_params()
         self.default_config = self.get_default_config()
 
         self.config = self.load_config()
+        self.param_entries = {}
+        self.param_group_frames = {}
+        self.param_group_meta = {}
+        self.params_listbox = None
+        self.params_content_canvas = None
+        self.params_content_host = None
+        self.active_param_group_id = "main"
+        self.main_paned = None
         self.enable_loaded_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("loaded", True))
         self.enable_stopped_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("stopped", True))
 
@@ -173,6 +54,17 @@ class LlamaServerGUI:
         self.create_menu()
         self.create_widgets()
         self.apply_config_to_form()
+        self.root.after(150, self._init_paned_sash)
+
+    def _init_paned_sash(self):
+        if self.main_paned is None:
+            return
+        try:
+            height = self.main_paned.winfo_height()
+            if height > 240:
+                self.main_paned.sash_place(0, 0, 0, int(height * 0.58))
+        except tk.TclError:
+            pass
 
     def create_menu(self):
         menu_bar = tk.Menu(self.root)
@@ -192,30 +84,32 @@ class LlamaServerGUI:
         sound_menu.add_checkbutton(label="Звук загрузки", variable=self.enable_loaded_sound_var, command=self.on_sound_settings_changed)
         sound_menu.add_checkbutton(label="Звук отключения", variable=self.enable_stopped_sound_var, command=self.on_sound_settings_changed)
 
+        params_menu = tk.Menu(menu_bar, tearoff=0)
+        for group in PARAM_GROUPS:
+            params_menu.add_command(
+                label=group["title"],
+                command=lambda gid=group["id"]: self.show_param_section(gid),
+            )
+
         menu_bar.add_cascade(label="Файл", menu=file_menu)
+        menu_bar.add_cascade(label="Параметры", menu=params_menu)
         menu_bar.add_cascade(label="Звуки", menu=sound_menu)
         menu_bar.add_cascade(label="Справка", menu=help_menu)
         self.root.config(menu=menu_bar)
 
     def get_default_config(self):
-        params = {}
-        for param, info in self.default_params.items():
-            if info["type"] == "bool":
-                params[param] = info["default"]
-            else:
-                params[param] = info["default"]
         return {
             "exe_path": "",
             "model_path": "",
             "window": {
-                "width": "920",
-                "height": "760"
+                "width": "1000",
+                "height": "900"
             },
             "sounds": {
                 "loaded": True,
                 "stopped": True
             },
-            "params": params
+            "params": self.default_params.copy()
         }
 
     def merge_config(self, loaded_config):
@@ -240,17 +134,14 @@ class LlamaServerGUI:
                 "stopped": bool(loaded_sounds.get("stopped", config["sounds"]["stopped"]))
             })
 
-        loaded_params = loaded_config.get("params", {})
-        if isinstance(loaded_params, dict):
-            if "-mlock" in loaded_params and "--mlock" not in loaded_params:
-                loaded_params["--mlock"] = loaded_params["-mlock"]
-            for param, default_value in self.default_params.items():
-                if param in loaded_params:
-                    value = loaded_params[param]
-                    if self.default_params[param]["type"] == "bool":
-                        config["params"][param] = bool(value)
-                    else:
-                        config["params"][param] = str(value)
+        loaded_params = normalize_loaded_params(loaded_config.get("params", {}))
+        for param, default_value in self.default_params.items():
+            if param in loaded_params:
+                value = loaded_params[param]
+                if isinstance(default_value, bool):
+                    config["params"][param] = bool(value)
+                else:
+                    config["params"][param] = str(value)
 
         return config
 
@@ -295,8 +186,8 @@ class LlamaServerGUI:
 
     def apply_window_geometry(self):
         window_cfg = self.config.get("window", {})
-        width = window_cfg.get("width", "920")
-        height = window_cfg.get("height", "760")
+        width = window_cfg.get("width", "1000")
+        height = window_cfg.get("height", "900")
         if width.isdigit() and height.isdigit():
             self.root.geometry(f"{width}x{height}")
 
@@ -309,13 +200,13 @@ class LlamaServerGUI:
 
         window_cfg = self.config.get("window", {})
         self.window_width_entry.delete(0, tk.END)
-        self.window_width_entry.insert(0, window_cfg.get("width", "920"))
+        self.window_width_entry.insert(0, window_cfg.get("width", "1000"))
         self.window_height_entry.delete(0, tk.END)
-        self.window_height_entry.insert(0, window_cfg.get("height", "760"))
+        self.window_height_entry.insert(0, window_cfg.get("height", "900"))
 
         params = self.config.get("params", {})
         for param, widget in self.param_entries.items():
-            value = params.get(param, self.default_params[param]["default"])
+            value = params.get(param, self.default_params[param])
             if isinstance(widget, tk.BooleanVar):
                 widget.set(bool(value))
             else:
@@ -323,105 +214,175 @@ class LlamaServerGUI:
                 widget.insert(0, str(value))
 
     def create_widgets(self):
-        path_frame = tk.LabelFrame(self.root, text=" Настройки путей ", padx=10, pady=5)
-        path_frame.pack(fill=tk.X, padx=10, pady=5)
+        path_frame = tk.LabelFrame(self.root, text=" Настройки путей ", padx=8, pady=4)
+        path_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
 
         tk.Label(path_frame, text="Сервер:").grid(row=0, column=0, sticky=tk.W, pady=2)
-        self.exe_entry = tk.Entry(path_frame, width=70)
-        self.exe_entry.grid(row=0, column=1, padx=5, pady=2)
+        self.exe_entry = tk.Entry(path_frame)
+        self.exe_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
         tk.Button(path_frame, text="Обзор...", command=self.browse_exe).grid(row=0, column=2, padx=2, pady=2)
+        self.list_devices_btn = tk.Button(
+            path_frame, text="Устройства", command=self.list_devices,
+        )
+        self.list_devices_btn.grid(row=0, column=3, padx=2, pady=2)
 
         tk.Label(path_frame, text="Модель:").grid(row=1, column=0, sticky=tk.W, pady=2)
-        self.model_entry = tk.Entry(path_frame, width=70)
-        self.model_entry.grid(row=1, column=1, padx=5, pady=2)
+        self.model_entry = tk.Entry(path_frame)
+        self.model_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
         tk.Button(path_frame, text="Обзор...", command=self.browse_model).grid(row=1, column=2, padx=2, pady=2)
 
-        tk.Label(path_frame, text="Ширина окна:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        self.window_width_entry = tk.Entry(path_frame, width=12)
-        self.window_width_entry.grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
+        size_frame = tk.Frame(path_frame)
+        size_frame.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
+        tk.Label(size_frame, text="Окно (Ш×В):").pack(side=tk.LEFT)
+        self.window_width_entry = tk.Entry(size_frame, width=6)
+        self.window_width_entry.pack(side=tk.LEFT, padx=(6, 2))
+        tk.Label(size_frame, text="×").pack(side=tk.LEFT)
+        self.window_height_entry = tk.Entry(size_frame, width=6)
+        self.window_height_entry.pack(side=tk.LEFT, padx=(2, 0))
+        path_frame.columnconfigure(1, weight=1)
 
-        tk.Label(path_frame, text="Высота окна:").grid(row=2, column=1, sticky=tk.E, pady=2)
-        self.window_height_entry = tk.Entry(path_frame, width=12)
-        self.window_height_entry.grid(row=2, column=2, sticky=tk.W, padx=5, pady=2)
+        toolbar = tk.Frame(self.root)
+        toolbar.pack(fill=tk.X, padx=10, pady=4)
 
-        param_container = tk.Frame(self.root)
-        param_container.pack(expand=True, fill=tk.BOTH, padx=10, pady=5)
+        tk.Button(toolbar, text="Сохранить", command=self.save_current_settings).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Button(toolbar, text="Импорт", command=self.import_settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text="Экспорт", command=self.export_settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text="Сброс", command=self.reset_settings).pack(side=tk.LEFT, padx=4)
 
-        self.canvas = tk.Canvas(param_container, borderwidth=0, highlightthickness=0)
-        scrollbar = tk.Scrollbar(param_container, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = tk.Frame(self.canvas)
+        tk.Frame(toolbar, width=24).pack(side=tk.LEFT)
 
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        self.start_btn = tk.Button(
+            toolbar, text="Запустить", bg="#4CAF50", fg="white",
+            font=("Arial", 10, "bold"), command=self.start_server,
+        )
+        self.start_btn.pack(side=tk.LEFT, padx=4)
+
+        self.stop_btn = tk.Button(
+            toolbar, text="Остановить", bg="#f44336", fg="white",
+            font=("Arial", 10, "bold"), command=self.stop_server, state=tk.DISABLED,
+        )
+        self.stop_btn.pack(side=tk.LEFT, padx=4)
+
+        self.restart_btn = tk.Button(
+            toolbar, text="Перезапустить", bg="#ff9800", fg="white",
+            font=("Arial", 10, "bold"), command=self.restart_server, state=tk.DISABLED,
+        )
+        self.restart_btn.pack(side=tk.LEFT, padx=4)
+
+        self.status_label = tk.Label(toolbar, text="Статус: Остановлен", fg="red", font=("Arial", 10, "bold"))
+        self.status_label.pack(side=tk.RIGHT, padx=4)
+
+        self.main_paned = tk.PanedWindow(
+            self.root, orient=tk.VERTICAL, sashwidth=7, sashrelief=tk.RAISED, showhandle=True,
+        )
+        self.main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
+
+        params_outer = tk.LabelFrame(self.main_paned, text=" Параметры запуска ", padx=6, pady=4)
+        self.main_paned.add(params_outer, minsize=320, stretch="always")
+
+        params_body = tk.Frame(params_outer)
+        params_body.pack(fill=tk.BOTH, expand=True)
+
+        sidebar = tk.Frame(params_body, width=210)
+        sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 6))
+        sidebar.pack_propagate(False)
+
+        tk.Label(sidebar, text="Категории", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+
+        list_frame = tk.Frame(sidebar)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        list_scroll = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        self.params_listbox = tk.Listbox(
+            list_frame,
+            activestyle=tk.NONE,
+            exportselection=False,
+            font=("Segoe UI", 9),
+            highlightthickness=1,
+            yscrollcommand=list_scroll.set,
+        )
+        list_scroll.config(command=self.params_listbox.yview)
+        list_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.params_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for index, group in enumerate(PARAM_GROUPS):
+            prefix = "   " if group.get("backend") else ""
+            self.params_listbox.insert(tk.END, f"{prefix}{group['title']}")
+            self.param_group_meta[index] = group["id"]
+
+        self.params_listbox.bind("<<ListboxSelect>>", self._on_param_group_selected)
+
+        content_panel = tk.Frame(params_body)
+        content_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.group_title_label = tk.Label(content_panel, text="", font=("Arial", 10, "bold"), anchor=tk.W)
+        self.group_title_label.pack(fill=tk.X, pady=(0, 2))
+
+        self.group_hint_label = tk.Label(
+            content_panel, text="", font=("Arial", 8), fg="#555555",
+            anchor=tk.W, justify=tk.LEFT, wraplength=720,
+        )
+        self.group_hint_label.pack(fill=tk.X, pady=(0, 6))
+
+        content_scrollbar = tk.Scrollbar(content_panel, orient=tk.VERTICAL)
+        self.params_content_canvas = tk.Canvas(
+            content_panel,
+            highlightthickness=0,
+            yscrollcommand=content_scrollbar.set,
+        )
+        content_scrollbar.config(command=self.params_content_canvas.yview)
+        content_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.params_content_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.params_content_host = tk.Frame(self.params_content_canvas)
+        self.params_content_window = self.params_content_canvas.create_window(
+            (0, 0), window=self.params_content_host, anchor=tk.NW,
         )
 
-        self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.params_content_host.bind(
+            "<Configure>",
+            lambda _event: self.params_content_canvas.configure(
+                scrollregion=self.params_content_canvas.bbox("all"),
+            ),
+        )
+        self.params_content_canvas.bind(
+            "<Configure>",
+            lambda event: self.params_content_canvas.itemconfig(
+                self.params_content_window, width=event.width,
+            ),
+        )
+        self.params_content_canvas.bind_all("<MouseWheel>", self._on_params_mousewheel, add="+")
 
-        self.canvas.pack(side="left", expand=True, fill="both")
-        scrollbar.pack(side="right", fill="y")
+        for group in PARAM_GROUPS:
+            group_frame = tk.Frame(self.params_content_host, padx=4, pady=2)
+            self.param_group_frames[group["id"]] = group_frame
+            self._build_param_group_grid(group_frame, group)
 
-        self.scrollable_frame.bind("<Enter>", self._bind_mousewheel)
-        self.scrollable_frame.bind("<Leave>", self._unbind_mousewheel)
+        log_container = tk.Frame(self.main_paned)
+        self.main_paned.add(log_container, minsize=140, stretch="always")
 
-        for cat_name in PARAM_CATEGORIES:
-            self.sections[cat_name] = CollapsibleSection(
-                self.scrollable_frame, cat_name, PARAM_CATEGORIES[cat_name], self.param_entries
-            )
+        log_header_frame = tk.Frame(log_container)
+        log_header_frame.pack(anchor=tk.W, fill=tk.X, pady=(0, 4))
 
-        settings_frame = tk.Frame(self.root)
-        settings_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        tk.Label(log_header_frame, text="Логи сервера", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
 
-        tk.Button(settings_frame, text="Сохранить настройки", command=self.save_current_settings).pack(side=tk.LEFT, padx=5)
-        tk.Button(settings_frame, text="Импорт настроек", command=self.import_settings).pack(side=tk.LEFT, padx=5)
-        tk.Button(settings_frame, text="Экспорт настроек", command=self.export_settings).pack(side=tk.LEFT, padx=5)
-        tk.Button(settings_frame, text="Сбросить параметры", command=self.reset_settings).pack(side=tk.LEFT, padx=5)
+        copy_btn = tk.Button(log_header_frame, text="Копировать", font=("Arial", 8), command=self.copy_logs_to_clipboard)
+        copy_btn.pack(side=tk.RIGHT, padx=4)
 
-        btn_frame = tk.Frame(self.root)
-        btn_frame.pack(pady=5, fill=tk.X, padx=10)
+        clear_btn = tk.Button(log_header_frame, text="Очистить", font=("Arial", 8), command=self.clear_logs)
+        clear_btn.pack(side=tk.RIGHT, padx=4)
 
-        self.start_btn = tk.Button(btn_frame, text="Запустить сервер", bg="#4CAF50", fg="white",
-                                   font=("Arial", 10, "bold"), command=self.start_server)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-
-        self.stop_btn = tk.Button(btn_frame, text="Остановить", bg="#f44336", fg="white",
-                                  font=("Arial", 10, "bold"), command=self.stop_server, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-
-        self.restart_btn = tk.Button(btn_frame, text="Перезапустить", bg="#ff9800", fg="white",
-                                     font=("Arial", 10, "bold"), command=self.restart_server, state=tk.DISABLED)
-        self.restart_btn.pack(side=tk.LEFT, padx=5)
-
-        self.status_label = tk.Label(btn_frame, text="Статус: Остановлен", fg="red", font=("Arial", 10, "bold"))
-        self.status_label.pack(side=tk.RIGHT, padx=10)
-
-        log_header_frame = tk.Frame(self.root)
-        log_header_frame.pack(anchor=tk.W, fill=tk.X, padx=10, pady=(5, 0))
-
-        log_label = tk.Label(log_header_frame, text="Логи сервера:", font=("Arial", 10, "italic"))
-        log_label.pack(side=tk.LEFT)
-
-        copy_btn = tk.Button(log_header_frame, text="Копировать лог", font=("Arial", 8),
-                             command=self.copy_logs_to_clipboard)
-        copy_btn.pack(side=tk.RIGHT, padx=5)
-
-        clear_btn = tk.Button(log_header_frame, text="Очистить лог", font=("Arial", 8),
-                              command=self.clear_logs)
-        clear_btn.pack(side=tk.RIGHT, padx=5)
-
-        save_log_btn = tk.Button(log_header_frame, text="Сохранить лог", font=("Arial", 8),
-                                 command=self.save_logs)
-        save_log_btn.pack(side=tk.RIGHT, padx=5)
+        save_log_btn = tk.Button(log_header_frame, text="Сохранить", font=("Arial", 8), command=self.save_logs)
+        save_log_btn.pack(side=tk.RIGHT, padx=4)
 
         self.log_area = scrolledtext.ScrolledText(
-            self.root,
+            log_container,
             wrap=tk.WORD,
             bg="#1e1e1e",
             fg="#d4d4d4",
-            font=("Consolas", 9)
+            font=("Consolas", 9),
         )
-        self.log_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=(0, 10))
+        self.log_area.pack(expand=True, fill=tk.BOTH)
 
         self.log_context_menu = tk.Menu(self.root, tearoff=0)
         self.log_context_menu.add_command(label="Копировать", command=self.copy_logs_to_clipboard)
@@ -429,15 +390,76 @@ class LlamaServerGUI:
         self.log_area.bind("<Double-Button-1>", self.show_log_context_menu)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.show_param_group("main")
 
-    def _bind_mousewheel(self, event):
-        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+    def _build_param_group_grid(self, parent, group):
+        row, col = 0, 0
+        for spec in group["params"]:
+            param = spec["key"]
+            value = self.default_params[param]
+            hint = spec.get("hint", "")
 
-    def _unbind_mousewheel(self, event):
-        self.root.unbind_all("<MouseWheel>")
+            cell = tk.Frame(parent, padx=6, pady=4)
+            cell.grid(row=row, column=col, sticky=tk.NW)
 
-    def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            tk.Label(cell, text=param, font=("Consolas", 9, "bold"), anchor=tk.W).pack(fill=tk.X)
+
+            if isinstance(value, bool):
+                var = tk.BooleanVar(value=value)
+                chk = tk.Checkbutton(cell, text="Включить", variable=var, font=("Arial", 9))
+                chk.pack(anchor=tk.W, pady=(2, 0))
+                self.param_entries[param] = var
+            else:
+                ent = tk.Entry(cell, width=16, font=("Consolas", 9))
+                ent.insert(0, str(value))
+                ent.pack(anchor=tk.W, pady=(2, 0))
+                self.param_entries[param] = ent
+
+            if hint:
+                tk.Label(cell, text=hint, font=("Arial", 8), fg="#777777", wraplength=180, justify=tk.LEFT).pack(
+                    anchor=tk.W, pady=(2, 0),
+                )
+
+            col += 1
+            if col >= PARAM_GRID_COLUMNS:
+                col = 0
+                row += 1
+
+        for column in range(PARAM_GRID_COLUMNS):
+            parent.columnconfigure(column, weight=1, uniform="param_cols")
+
+    def _on_param_group_selected(self, _event=None):
+        selection = self.params_listbox.curselection()
+        if not selection:
+            return
+        group_id = self.param_group_meta.get(selection[0])
+        if group_id:
+            self.show_param_group(group_id, from_listbox=True)
+
+    def show_param_group(self, group_id, from_listbox=False):
+        if group_id not in self.param_group_frames:
+            return
+
+        self.active_param_group_id = group_id
+        for frame in self.param_group_frames.values():
+            frame.pack_forget()
+
+        active_frame = self.param_group_frames[group_id]
+        active_frame.pack(fill=tk.BOTH, expand=True)
+        self.params_content_canvas.yview_moveto(0)
+
+        group = next((item for item in PARAM_GROUPS if item["id"] == group_id), None)
+        if group:
+            self.group_title_label.config(text=group["title"])
+            self.group_hint_label.config(text=group.get("hint", ""))
+
+        if not from_listbox:
+            for index, gid in self.param_group_meta.items():
+                if gid == group_id:
+                    self.params_listbox.selection_clear(0, tk.END)
+                    self.params_listbox.selection_set(index)
+                    self.params_listbox.see(index)
+                    break
 
     def browse_exe(self):
         file_path = filedialog.askopenfilename(
@@ -447,6 +469,93 @@ class LlamaServerGUI:
         if file_path:
             self.exe_entry.delete(0, tk.END)
             self.exe_entry.insert(0, os.path.normpath(file_path))
+
+    def _get_hidden_startupinfo(self):
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            return startupinfo
+        return None
+
+    def list_devices(self):
+        exe_path = os.path.normpath(self.exe_entry.get().strip())
+        if not exe_path or not os.path.exists(exe_path):
+            messagebox.showerror("Ошибка", "Укажите корректный путь к llama-server.exe")
+            return
+
+        self.list_devices_btn.config(state=tk.DISABLED, text="Загрузка...")
+        threading.Thread(target=self._run_list_devices, args=(exe_path,), daemon=True).start()
+
+    def _run_list_devices(self, exe_path):
+        cmd = [exe_path, "--list-devices"]
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                startupinfo=self._get_hidden_startupinfo(),
+                timeout=30,
+            )
+            output = result.stdout or ""
+            if result.stderr:
+                if output:
+                    output += "\n"
+                output += result.stderr
+            if not output.strip():
+                output = f"Команда завершилась с кодом {result.returncode}.\nВывод пуст."
+
+            title = "Устройства системы (--list-devices)"
+            if result.returncode != 0:
+                title = f"Устройства (--list-devices, код {result.returncode})"
+
+            self.root.after(0, lambda: self._show_devices_result(title, output, cmd))
+        except subprocess.TimeoutExpired:
+            self.root.after(
+                0,
+                lambda: messagebox.showerror("Ошибка", "Превышено время ожидания команды --list-devices"),
+            )
+        except OSError as exc:
+            self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+        finally:
+            self.root.after(0, self._list_devices_finished)
+
+    def _list_devices_finished(self):
+        self.list_devices_btn.config(state=tk.NORMAL, text="Устройства")
+
+    def _show_devices_result(self, title, output, cmd):
+        self.log(f"--- {title} ---\nКоманда: {' '.join(cmd)}\n\n{output}\n")
+
+        window = tk.Toplevel(self.root)
+        window.title(title)
+        window.geometry("760x440")
+        window.transient(self.root)
+
+        tk.Label(
+            window,
+            text=" ".join(cmd),
+            font=("Consolas", 9),
+            fg="#555555",
+            anchor=tk.W,
+        ).pack(fill=tk.X, padx=10, pady=(10, 4))
+
+        text_area = scrolledtext.ScrolledText(window, wrap=tk.WORD, font=("Consolas", 10))
+        text_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=4)
+        text_area.insert("1.0", output)
+        text_area.config(state=tk.DISABLED)
+
+        btn_frame = tk.Frame(window)
+        btn_frame.pack(pady=(0, 10))
+
+        def copy_output():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(output)
+            self.root.update()
+
+        tk.Button(btn_frame, text="Копировать", command=copy_output).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_frame, text="Закрыть", command=window.destroy).pack(side=tk.LEFT, padx=4)
 
     def browse_model(self):
         file_path = filedialog.askopenfilename(
@@ -551,42 +660,29 @@ class LlamaServerGUI:
             self.root.geometry(f"{width}x{height}")
 
     def show_help(self):
-        help_text = self._build_help_text()
-
-        help_window = tk.Toplevel(self.root)
-        help_window.title("Справка")
-        help_window.geometry("760x620")
-        help_window.transient(self.root)
-
-        text_area = scrolledtext.ScrolledText(help_window, wrap=tk.WORD, font=("Segoe UI", 10))
-        text_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-        text_area.insert("1.0", help_text)
-        text_area.config(state=tk.DISABLED)
-
-        close_btn = tk.Button(help_window, text="Закрыть", command=help_window.destroy)
-        close_btn.pack(pady=(0, 10))
-
-    def _build_help_text(self):
-        return (
+        help_text = (
             "Llama Server Controller — справка\n\n"
             "Назначение программы:\n"
             "Приложение позволяет выбрать llama-server.exe, указать GGUF-модель, настроить параметры запуска,\n"
             "запустить сервер, остановить его, перезапустить и просматривать логи.\n\n"
             "Описание полей:\n"
             "Сервер — путь к файлу llama-server.exe.\n"
+            "Устройства — запускает llama-server --list-devices и показывает доступные GPU/CPU\n"
+            "устройства перед настройкой --device.\n"
             "Модель — путь к файлу модели в формате .gguf.\n"
             "Ширина окна — ширина окна приложения в пикселях.\n"
             "Высота окна — высота окна приложения в пикселях.\n\n"
-            "Категории параметров:\n"
-            "- Основные: ctx-size, n-gpu-layers, host, port (ключевые параметры)\n"
-            "- Память: mmap, mlock, kv-offload, cache-type-k/v, repack (управление памятью)\n"
-            "- CPU: threads, threads-batch, cpu-mask, cpu-range, numa (настройки процессора)\n"
-            "- GPU: device, split-mode, tensor-split, main-gpu, batch-size (настройки видеокарты)\n"
-            "- Контекстное окно: rope-scaling, yarn-*, no-context-shift (размер контекста)\n"
-            "- Flash Attention: -fa (ускорение attention)\n"
-            "- Sampling: temp, top-p, top-k, repeat-penalty и др. (алгоритмы выбора токенов)\n"
-            "- Parallel Slots: parallel (одновременные диалоги)\n"
-            "- Speculative Decoding: spec-type, spec-draft-n-max (ускорение генерации)\n\n"
+            "Описание параметров запуска:\n"
+            "Слева — список категорий, справа — поля выбранной группы (4 колонки).\n"
+            "Переключение: клик в списке или меню «Параметры». Разделитель между параметрами\n"
+            "и логами можно перетаскивать для изменения высоты панелей.\n\n"
+            "Основные:\n"
+            "--ctx-size — размер контекста; --n-gpu-layers — слои на GPU; -fa — Flash Attention;\n"
+            "--threads — потоки CPU; --cache-type-k/v — формат KV Cache; --no-mmap, --mlock — память;\n"
+            "--host, --port — сетевые настройки сервера.\n\n"
+            "Другие группы: Контекст, GPU, Память, CPU, Batch, Генерация, Draft Model, MoE,\n"
+            "Embeddings, Сервер, Безопасность, Диагностика, а также Backend (CUDA, Vulkan, HIP, Metal, SYCL).\n"
+            "Поля backend-устройств (--device-cuda и т.д.) передаются как --device при запуске.\n\n"
             "Кнопки и функции:\n"
             "Сохранить настройки — сохраняет текущие пути, размеры окна и параметры в llama_config.json.\n"
             "Импорт настроек — загружает настройки из внешнего JSON-файла.\n"
@@ -607,6 +703,19 @@ class LlamaServerGUI:
             "Если сервер не запускается, проверьте путь к exe, путь к модели и совместимость параметров."
         )
 
+        help_window = tk.Toplevel(self.root)
+        help_window.title("Справка")
+        help_window.geometry("760x620")
+        help_window.transient(self.root)
+
+        text_area = scrolledtext.ScrolledText(help_window, wrap=tk.WORD, font=("Segoe UI", 10))
+        text_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+        text_area.insert("1.0", help_text)
+        text_area.config(state=tk.DISABLED)
+
+        close_btn = tk.Button(help_window, text="Закрыть", command=help_window.destroy)
+        close_btn.pack(pady=(0, 10))
+
     def show_about(self):
         about_text = (
             "Llama Server Controller\n"
@@ -616,26 +725,51 @@ class LlamaServerGUI:
         )
         messagebox.showinfo("О программе", about_text)
 
+    def _on_params_mousewheel(self, event):
+        if self.params_content_canvas is None:
+            return
+        widget = event.widget
+        while widget is not None:
+            if widget in (self.params_content_canvas, self.params_content_host):
+                self.params_content_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+                return
+            widget = getattr(widget, "master", None)
+
+    def show_param_section(self, section_id):
+        self.show_param_group(section_id)
+
+    def get_param_value(self, param):
+        widget = self.param_entries.get(param)
+        if widget is None:
+            return None
+        if isinstance(widget, tk.BooleanVar):
+            return widget.get()
+        return widget.get().strip()
+
     def generate_args(self):
         dynamic_args = []
         for param, widget in self.param_entries.items():
+            if param in BACKEND_DEVICE_KEYS:
+                continue
             if isinstance(widget, tk.BooleanVar):
-                value = widget.get()
-                param_info = self.default_params[param]
-                default = param_info.get("default", False)
-                
-                is_negative_flag = param.startswith("--no-")
-                
-                if is_negative_flag:
-                    if value:
-                        dynamic_args.append(param)
-                else:
-                    if value and not default:
-                        dynamic_args.append(param)
+                if widget.get():
+                    dynamic_args.append(param)
             else:
                 val = widget.get().strip()
                 if val:
                     dynamic_args.extend([param, val])
+
+        device_value = self.get_param_value("--device") or ""
+        if not device_value:
+            for key in BACKEND_DEVICE_KEYS:
+                val = self.get_param_value(key) or ""
+                if val:
+                    device_value = val
+                    break
+
+        if device_value:
+            dynamic_args.extend(["--device", device_value])
+
         return dynamic_args
 
     def append_log(self, text):
@@ -737,11 +871,7 @@ class LlamaServerGUI:
         full_cmd = [exe_path, "-m", model_path] + custom_args
 
         try:
-            startupinfo = None
-            if sys.platform == "win32":
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
+            startupinfo = self._get_hidden_startupinfo()
 
             self.process = subprocess.Popen(
                 full_cmd,
@@ -812,6 +942,7 @@ class LlamaServerGUI:
         else:
             self.save_config()
             self.root.destroy()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
