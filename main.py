@@ -7,6 +7,7 @@ import tempfile
 import threading
 import tkinter as tk
 import urllib.request
+import webbrowser
 import zipfile
 import winsound
 from tkinter import scrolledtext, messagebox, filedialog
@@ -1217,11 +1218,29 @@ class LlamaServerGUI:
         self.stop_server(log_message=False)
         self.root.after(500, self.start_server)
 
+    def get_server_url(self):
+        host = self.get_param_value("host") or "localhost"
+        port = self.get_param_value("port") or "18080"
+
+        if host in {"0.0.0.0", "::", "*", ""}:
+            host = "localhost"
+
+        return f"http://{host}:{port}/"
+
+    def open_server_in_browser(self):
+        url = self.get_server_url()
+        self.log(f"Открытие браузера: {url}\n")
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            self.log(f"Не удалось открыть браузер автоматически: {exc}\n")
+
     def set_ready_state(self):
         if self.is_running:
             self.stop_loading_blink()
             self.status_label.config(text="Статус: Работает", fg="green")
             self.play_loaded_sound()
+            self.open_server_in_browser()
 
     def set_stopped_state(self, play_sound=False):
         self.stop_loading_blink()
