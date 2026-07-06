@@ -20,20 +20,31 @@ from params_config import (
 )
 
 CONFIG_FILE = "llama_config.json"
+APP_ICON_FILE = os.path.join("icon", "icon02.png")
 APP_VERSION = "0.1.0"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
+LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
 LLAMA_CPP_RELEASE_TAG = "b9870"
-LLAMA_CPP_RELEASE_BASE_URL = f"https://github.com/ggml-org/llama.cpp/releases/download/{LLAMA_CPP_RELEASE_TAG}"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
+LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)"
 LLAMA_CPP_WINDOWS_ASSETS = [
+    {
+        "label": "Windows x64 (Vulkan)",
+        "asset": "llama-b9870-bin-win-vulkan-x64.zip",
+        "dll_asset": None,
+        "arch": "x64",
+        "backend": "Vulkan",
+        "recommended": True,
+    },
     {
         "label": "Windows x64 (CPU)",
         "asset": "llama-b9870-bin-win-cpu-x64.zip",
         "dll_asset": None,
         "arch": "x64",
         "backend": "CPU",
+        "recommended": False,
     },
     {
         "label": "Windows arm64 (CPU)",
@@ -41,6 +52,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "arm64",
         "backend": "CPU",
+        "recommended": False,
     },
     {
         "label": "Windows arm64 (OpenCL Adreno)",
@@ -48,6 +60,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "arm64",
         "backend": "OpenCL Adreno",
+        "recommended": False,
     },
     {
         "label": "Windows x64 (CUDA 12)",
@@ -55,6 +68,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": "cudart-llama-bin-win-cuda-12.4-x64.zip",
         "arch": "x64",
         "backend": "CUDA 12",
+        "recommended": False,
     },
     {
         "label": "Windows x64 (CUDA 13)",
@@ -62,6 +76,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": "cudart-llama-bin-win-cuda-13.3-x64.zip",
         "arch": "x64",
         "backend": "CUDA 13",
+        "recommended": False,
     },
     {
         "label": "Windows x64 (Vulkan)",
@@ -69,6 +84,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "x64",
         "backend": "Vulkan",
+        "recommended": True,
     },
     {
         "label": "Windows x64 (OpenVINO)",
@@ -76,6 +92,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "x64",
         "backend": "OpenVINO",
+        "recommended": False,
     },
     {
         "label": "Windows x64 (SYCL)",
@@ -83,6 +100,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "x64",
         "backend": "SYCL",
+        "recommended": False,
     },
     {
         "label": "Windows x64 (HIP)",
@@ -90,6 +108,7 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "dll_asset": None,
         "arch": "x64",
         "backend": "HIP",
+        "recommended": False,
     },
 ]
 
@@ -99,6 +118,7 @@ class LlamaServerGUI:
         self.root = root
         self.root.title("LLM Server Controller")
         self.root.geometry("1000x900")
+        self.apply_app_icon()
 
         self.process = None
         self.is_running = False
@@ -137,6 +157,17 @@ class LlamaServerGUI:
             height = self.main_paned.winfo_height()
             if height > 240:
                 self.main_paned.sash_place(0, 0, 0, int(height * 0.58))
+        except tk.TclError:
+            pass
+
+    def apply_app_icon(self):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), APP_ICON_FILE)
+        if not os.path.exists(icon_path):
+            return
+
+        try:
+            self.window_icon = tk.PhotoImage(file=icon_path)
+            self.root.iconphoto(True, self.window_icon)
         except tk.TclError:
             pass
 
@@ -179,8 +210,8 @@ class LlamaServerGUI:
             "model_path": "",
             "install": {
                 "directory": "",
-                "asset_label": LLAMA_CPP_WINDOWS_ASSETS[0]["label"],
-                "release_tag": LLAMA_CPP_RELEASE_TAG
+                "asset_label": LLAMA_CPP_RECOMMENDED_LABEL,
+                "release_tag": ""
             },
             "window": {
                 "width": "1000",
@@ -259,8 +290,8 @@ class LlamaServerGUI:
             "model_path": os.path.normpath(self.model_entry.get().strip()) if hasattr(self, "model_entry") else self.config.get("model_path", ""),
             "install": {
                 "directory": self.config.get("install", {}).get("directory", ""),
-                "asset_label": self.config.get("install", {}).get("asset_label", LLAMA_CPP_WINDOWS_ASSETS[0]["label"]),
-                "release_tag": LLAMA_CPP_RELEASE_TAG,
+                "asset_label": self.config.get("install", {}).get("asset_label", LLAMA_CPP_RECOMMENDED_LABEL),
+                "release_tag": self.config.get("install", {}).get("release_tag", ""),
             },
             "window": {
                 "width": width or self.default_config["window"]["width"],
@@ -605,7 +636,7 @@ class LlamaServerGUI:
 
         self.install_in_progress = True
         self.install_llama_btn.config(state=tk.DISABLED, text="Установка...")
-        self.log(f"--- Установка llama.cpp {LLAMA_CPP_RELEASE_TAG} ---\nВариант: {selected_asset['label']}\nПапка: {install_dir}\n\n")
+        self.log(f"--- Установка llama.cpp ---\nИсточник: {LLAMA_CPP_RELEASES_URL}\nВариант: {selected_asset['label']}\nПапка: {install_dir}\n\n")
         threading.Thread(target=self._install_llama_cpp_worker, args=(selected_asset, install_dir), daemon=True).start()
 
     def _prompt_llama_asset(self):
@@ -619,7 +650,7 @@ class LlamaServerGUI:
 
         tk.Label(
             dialog,
-            text=f"Выберите Windows-сборку llama.cpp {LLAMA_CPP_RELEASE_TAG}",
+            text="Выберите Windows-сборку llama.cpp",
             font=("Arial", 10, "bold"),
             anchor=tk.W,
             justify=tk.LEFT,
@@ -627,7 +658,7 @@ class LlamaServerGUI:
 
         tk.Label(
             dialog,
-            text="Для CUDA-версий будут дополнительно скачаны DLL-пакеты из того же релиза.",
+            text="Ссылки берутся со страницы релизов llama.cpp. Вариант Windows x64 (Vulkan) выбран по умолчанию и отмечен как рекомендуемый.",
             fg="#555555",
             anchor=tk.W,
             justify=tk.LEFT,
@@ -643,11 +674,15 @@ class LlamaServerGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        remembered_label = self.config.get("install", {}).get("asset_label", LLAMA_CPP_WINDOWS_ASSETS[0]["label"])
-        default_index = 0
+        remembered_label = self.config.get("install", {}).get("asset_label", LLAMA_CPP_RECOMMENDED_LABEL)
+        default_index = next(
+            (index for index, asset in enumerate(LLAMA_CPP_WINDOWS_ASSETS) if asset.get("recommended")),
+            0,
+        )
         for index, asset in enumerate(LLAMA_CPP_WINDOWS_ASSETS):
             suffix = " + CUDA DLLs" if asset.get("dll_asset") else ""
-            listbox.insert(tk.END, f"{asset['label']}{suffix}")
+            recommended_suffix = " — Рекомендуется" if asset.get("recommended") else ""
+            listbox.insert(tk.END, f"{asset['label']}{suffix}{recommended_suffix}")
             if asset["label"] == remembered_label:
                 default_index = index
         listbox.selection_set(default_index)
@@ -675,9 +710,9 @@ class LlamaServerGUI:
         return selected_value["asset"]
 
     def _install_llama_cpp_worker(self, selected_asset, install_dir):
-        archive_url = f"{LLAMA_CPP_RELEASE_BASE_URL}/{selected_asset['asset']}"
+        archive_url = self._build_release_download_url(selected_asset["asset"])
         dll_asset = selected_asset.get("dll_asset")
-        dll_url = f"{LLAMA_CPP_RELEASE_BASE_URL}/{dll_asset}" if dll_asset else None
+        dll_url = self._build_release_download_url(dll_asset) if dll_asset else None
         temp_dir = tempfile.mkdtemp(prefix="llama_cpp_install_")
 
         try:
@@ -699,13 +734,17 @@ class LlamaServerGUI:
 
             self.root.after(0, lambda: self._finish_llama_install(selected_asset, install_dir, exe_path))
         except Exception as exc:
-            self.root.after(0, lambda: self._handle_llama_install_error(str(exc)))
+            error_message = str(exc) or exc.__class__.__name__
+            self.root.after(0, lambda message=error_message: self._handle_llama_install_error(message))
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
             self.root.after(0, self._reset_install_controls)
 
+    def _build_release_download_url(self, asset_name):
+        return f"{LLAMA_CPP_RELEASES_URL}/download/{LLAMA_CPP_RELEASE_TAG}/{asset_name}"
+
     def _download_file(self, url, destination_path, display_name):
-        self.root.after(0, lambda: self.log(f"Скачивание: {display_name}\nURL: {url}\n"))
+        self.root.after(0, lambda: self.log(f"Скачивание: {display_name}\nИсточник: {LLAMA_CPP_RELEASES_URL}\nРелиз: {LLAMA_CPP_RELEASE_TAG}\nURL: {url}\n"))
         with urllib.request.urlopen(url) as response, open(destination_path, "wb") as target:
             total = response.headers.get("Content-Length")
             total_size = int(total) if total and total.isdigit() else 0
@@ -755,13 +794,13 @@ class LlamaServerGUI:
         self.config["install"] = {
             "directory": install_dir,
             "asset_label": selected_asset["label"],
-            "release_tag": LLAMA_CPP_RELEASE_TAG,
+            "release_tag": selected_asset["asset"],
         }
         self.save_config()
         self.log(f"Установка завершена. Найден исполняемый файл: {exe_path}\n\n")
         messagebox.showinfo(
             "Установка завершена",
-            f"llama.cpp {LLAMA_CPP_RELEASE_TAG} установлен в:\n{install_dir}\n\nllama-server.exe:\n{exe_path}",
+            f"llama.cpp установлен в:\n{install_dir}\n\nСборка: {selected_asset['label']}\nllama-server.exe:\n{exe_path}",
         )
 
     def _handle_llama_install_error(self, error_message):
@@ -963,7 +1002,7 @@ class LlamaServerGUI:
 
     def show_help(self):
         help_text = (
-            "Llama Server Controller — справка\n\n"
+            "LLM Server Controller — справка\n\n"
             "Назначение программы:\n"
             "Приложение позволяет выбрать llama-server.exe, указать GGUF-модель, настроить параметры запуска,\n"
             "запустить сервер, остановить его, перезапустить и просматривать логи.\n\n"
@@ -1020,7 +1059,7 @@ class LlamaServerGUI:
 
     def show_about(self):
         about_text = (
-            "Llama Server Controller\n"
+            "LLM Server Controller\n"
             f"Version: {APP_VERSION}\n"
             f"Author: {APP_AUTHOR}\n"
             f"License: {APP_LICENSE}"
