@@ -20,12 +20,32 @@ from params_config import (
 )
 
 CONFIG_FILE = "llama_config.json"
-APP_ICON_FILE = os.path.join("icon", "icon02.png")
+APP_ICON_FILE = "icon02.png"
+APP_ICON_ICO_FILE = "icon02.ico"
 APP_VERSION = "0.1.0"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
 LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
+
+
+def get_app_base_dir():
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass and os.path.isdir(meipass):
+            return meipass
+        exe_dir = os.path.dirname(sys.executable)
+        internal_dir = os.path.join(exe_dir, "_internal")
+        if os.path.isdir(internal_dir):
+            return internal_dir
+        return exe_dir
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_app_path(*parts):
+    base = get_app_base_dir()
+    return os.path.join(base, *parts)
+
 LLAMA_CPP_RELEASE_TAG = "b9870"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
 LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)"
@@ -37,6 +57,10 @@ LLAMA_CPP_WINDOWS_ASSETS = [
         "arch": "x64",
         "backend": "Vulkan",
         "recommended": True,
+    },
+    {
+        "label": "---------------------------------------------"
+        
     },
     {
         "label": "Windows x64 (CPU)",
@@ -161,15 +185,40 @@ class LlamaServerGUI:
             pass
 
     def apply_app_icon(self):
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), APP_ICON_FILE)
-        if not os.path.exists(icon_path):
-            return
+        paths_to_try = []
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                paths_to_try.append(os.path.join(meipass, "icons", "icon02.ico"))
+                paths_to_try.append(os.path.join(meipass, "icon02.ico"))
+        paths_to_try.append(get_app_path("icons", "icon02.ico"))
+        paths_to_try.append(get_app_path("icon02.ico"))
 
-        try:
-            self.window_icon = tk.PhotoImage(file=icon_path)
-            self.root.iconphoto(True, self.window_icon)
-        except tk.TclError:
-            pass
+        for icon_path in paths_to_try:
+            if icon_path and os.path.exists(icon_path):
+                try:
+                    self.root.iconbitmap(icon_path)
+                    return
+                except tk.TclError:
+                    pass
+
+        png_paths = []
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                png_paths.append(os.path.join(meipass, "icons", "icon02.png"))
+                png_paths.append(os.path.join(meipass, "icon02.png"))
+        png_paths.append(get_app_path("icons", "icon02.png"))
+        png_paths.append(get_app_path("icon02.png"))
+
+        for icon_path in png_paths:
+            if icon_path and os.path.exists(icon_path):
+                try:
+                    self.window_icon = tk.PhotoImage(file=icon_path)
+                    self.root.iconphoto(True, self.window_icon)
+                    return
+                except tk.TclError:
+                    pass
 
     def create_menu(self):
         menu_bar = tk.Menu(self.root)
@@ -265,7 +314,10 @@ class LlamaServerGUI:
 
         return config
 
-    def load_config(self, file_path=CONFIG_FILE):
+    def load_config(self, file_path=None):
+        if file_path is None:
+            file_path = get_app_path(CONFIG_FILE)
+
         if os.path.exists(file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -304,7 +356,10 @@ class LlamaServerGUI:
             "params": params
         }
 
-    def save_config(self, file_path=CONFIG_FILE):
+    def save_config(self, file_path=None):
+        if file_path is None:
+            file_path = get_app_path(CONFIG_FILE)
+
         self.config = self.merge_config(self.collect_form_state())
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=4)
@@ -1058,13 +1113,31 @@ class LlamaServerGUI:
         close_btn.pack(pady=(0, 10))
 
     def show_about(self):
-        about_text = (
-            "LLM Server Controller\n"
-            f"Version: {APP_VERSION}\n"
-            f"Author: {APP_AUTHOR}\n"
-            f"License: {APP_LICENSE}"
-        )
-        messagebox.showinfo("О программе", about_text)
+        about_window = tk.Toplevel(self.root)
+        about_window.title("О программе")
+        about_window.transient(self.root)
+        about_window.grab_set()
+        
+        info_lines = [
+            ("LLM Server Controller", None),
+            (f"Version: {APP_VERSION}", None),
+            (f"Author: {APP_AUTHOR}", None),
+            (f"License: {APP_LICENSE}", None),
+        ]
+        
+        for text, url in info_lines:
+            lbl = tk.Label(about_window, text=text, justify=tk.LEFT, padx=20, pady=2)
+            lbl.pack(anchor="w")
+        
+        website_link = tk.Label(about_window, text="Website: https://llm-server.github.io/", justify=tk.LEFT, padx=20, pady=2, fg="blue", cursor="hand2")
+        website_link.pack(anchor="w")
+        website_link.bind("<Button-1>", lambda e: webbrowser.open("https://llm-server.github.io/"))
+        
+        donate_btn = tk.Button(about_window, text="Donate", command=lambda: webbrowser.open("https://donatepay.eu/don/46859"))
+        donate_btn.pack(pady=(10, 10))
+        
+        close_btn = tk.Button(about_window, text="OK", command=about_window.destroy)
+        close_btn.pack(pady=(0, 10))
 
     def _on_params_mousewheel(self, event):
         if self.params_content_canvas is None:
