@@ -20,8 +20,22 @@ from params_config import (
 )
 
 CONFIG_FILE = "llama_config.json"
-APP_ICON_FILE = "icon02.png"
-APP_ICON_ICO_FILE = "icon02.ico"
+APP_ICON_ICO_CANDIDATES = [
+    "256х256.ico",
+    "64х64.ico",
+    "48х48.ico",
+    "32х32.ico",
+    "24х24.ico",
+    "16х16.ico",
+]
+APP_ICON_PNG_CANDIDATES = [
+    "256х256.png",
+    "64х64.png",
+    "32х32.png",
+    "24х24.png",
+    "16х16.png",
+    "icon48х48.png",
+]
 APP_VERSION = "0.1.0"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
@@ -45,6 +59,21 @@ def get_app_base_dir():
 def get_app_path(*parts):
     base = get_app_base_dir()
     return os.path.join(base, *parts)
+
+
+def get_user_config_dir():
+    """Каталог, в который у пользователя гарантированно есть право на запись,
+    независимо от того, на какой диск/в какую папку установлено приложение
+    (в отличие от папки рядом с exe, которая может быть защищена, например
+    C:\\Program Files)."""
+    appdata = os.getenv("APPDATA") or os.path.expanduser("~")
+    config_dir = os.path.join(appdata, "LLM_Server_Controller")
+    os.makedirs(config_dir, exist_ok=True)
+    return config_dir
+
+
+def get_user_config_path():
+    return os.path.join(get_user_config_dir(), CONFIG_FILE)
 
 LLAMA_CPP_RELEASE_TAG = "b9870"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
@@ -185,16 +214,51 @@ class LlamaServerGUI:
             pass
 
     def apply_app_icon(self):
-        paths_to_try = []
+        ico_paths = []
         if getattr(sys, "frozen", False):
             meipass = getattr(sys, "_MEIPASS", None)
             if meipass:
-                paths_to_try.append(os.path.join(meipass, "icons", "icon02.ico"))
-                paths_to_try.append(os.path.join(meipass, "icon02.ico"))
-        paths_to_try.append(get_app_path("icons", "icon02.ico"))
-        paths_to_try.append(get_app_path("icon02.ico"))
+                ico_paths.extend(
+                    os.path.join(meipass, "icons", name)
+                    for name in APP_ICON_ICO_CANDIDATES
+                )
+                ico_paths.extend(
+                    os.path.join(meipass, name)
+                    for name in APP_ICON_ICO_CANDIDATES
+                )
 
-        for icon_path in paths_to_try:
+                icons_dir = os.path.join(meipass, "icons")
+                if os.path.isdir(icons_dir):
+                    ico_paths.extend(
+                        os.path.join(icons_dir, name)
+                        for name in sorted(os.listdir(icons_dir))
+                        if name.lower().endswith(".ico") and name not in APP_ICON_ICO_CANDIDATES
+                    )
+                ico_paths.extend(
+                    os.path.join(meipass, name)
+                    for name in sorted(os.listdir(meipass))
+                    if name.lower().endswith(".ico") and name not in APP_ICON_ICO_CANDIDATES
+                )
+
+        icons_dir = get_app_path("icons")
+        ico_paths.extend(get_app_path("icons", name) for name in APP_ICON_ICO_CANDIDATES)
+        if os.path.isdir(icons_dir):
+            ico_paths.extend(
+                os.path.join(icons_dir, name)
+                for name in sorted(os.listdir(icons_dir))
+                if name.lower().endswith(".ico") and name not in APP_ICON_ICO_CANDIDATES
+            )
+
+        base_dir = get_app_base_dir()
+        ico_paths.extend(get_app_path(name) for name in APP_ICON_ICO_CANDIDATES)
+        if os.path.isdir(base_dir):
+            ico_paths.extend(
+                os.path.join(base_dir, name)
+                for name in sorted(os.listdir(base_dir))
+                if name.lower().endswith(".ico") and name not in APP_ICON_ICO_CANDIDATES
+            )
+
+        for icon_path in ico_paths:
             if icon_path and os.path.exists(icon_path):
                 try:
                     self.root.iconbitmap(icon_path)
@@ -206,10 +270,16 @@ class LlamaServerGUI:
         if getattr(sys, "frozen", False):
             meipass = getattr(sys, "_MEIPASS", None)
             if meipass:
-                png_paths.append(os.path.join(meipass, "icons", "icon02.png"))
-                png_paths.append(os.path.join(meipass, "icon02.png"))
-        png_paths.append(get_app_path("icons", "icon02.png"))
-        png_paths.append(get_app_path("icon02.png"))
+                png_paths.extend(
+                    os.path.join(meipass, "icons", name)
+                    for name in APP_ICON_PNG_CANDIDATES
+                )
+                png_paths.extend(
+                    os.path.join(meipass, name)
+                    for name in APP_ICON_PNG_CANDIDATES
+                )
+        png_paths.extend(get_app_path("icons", name) for name in APP_ICON_PNG_CANDIDATES)
+        png_paths.extend(get_app_path(name) for name in APP_ICON_PNG_CANDIDATES)
 
         for icon_path in png_paths:
             if icon_path and os.path.exists(icon_path):
@@ -316,7 +386,18 @@ class LlamaServerGUI:
 
     def load_config(self, file_path=None):
         if file_path is None:
-            file_path = get_app_path(CONFIG_FILE)
+            file_path = get_user_config_path()
+
+            # Миграция: если пользователь раньше сохранял конфиг рядом с exe
+            # (например, на диске, где запись разрешена), а в новом
+            # пользовательском каталоге конфига ещё нет — переносим его.
+            if not os.path.exists(file_path):
+                legacy_path = get_app_path(CONFIG_FILE)
+                if os.path.exists(legacy_path):
+                    try:
+                        shutil.copy2(legacy_path, file_path)
+                    except OSError:
+                        pass
 
         if os.path.exists(file_path):
             try:
@@ -358,7 +439,7 @@ class LlamaServerGUI:
 
     def save_config(self, file_path=None):
         if file_path is None:
-            file_path = get_app_path(CONFIG_FILE)
+            file_path = get_user_config_path()
 
         self.config = self.merge_config(self.collect_form_state())
         with open(file_path, "w", encoding="utf-8") as f:
@@ -1365,14 +1446,20 @@ class LlamaServerGUI:
         if play_sound:
             self.play_stopped_sound()
 
+    def _save_config_safely(self):
+        try:
+            self.save_config()
+        except OSError as exc:
+            messagebox.showerror("Ошибка сохранения", str(exc))
+
     def on_close(self):
         if self.is_running:
             if messagebox.askokcancel("Выход", "Сервер еще работает. Завершить процесс и выйти?"):
                 self.stop_server()
-                self.save_config()
+                self._save_config_safely()
                 self.root.destroy()
         else:
-            self.save_config()
+            self._save_config_safely()
             self.root.destroy()
 
 
