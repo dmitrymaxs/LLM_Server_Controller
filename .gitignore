@@ -1,0 +1,28 @@
+﻿# Directories
+LLM_2/
+LLM_Setup/
+LLM_new/
+__pycache__/
+build/
+dist/
+icon/
+
+# Python backup files
+*.bak
+*.pyc
+
+# Spec files
+*.spec
+
+# Lock files
+.~lock*
+
+# Temp files
+git_commands.txt
+
+# PDF/EPUB files
+*.pdf
+*.epub
+
+# Backup/alternate versions
+main_v_1.py
