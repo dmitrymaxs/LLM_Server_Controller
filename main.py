@@ -195,6 +195,7 @@ class LlamaServerGUI:
         self.main_paned = None
         self.enable_loaded_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("loaded", True))
         self.enable_stopped_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("stopped", True))
+        self.open_browser_on_load_var = tk.BooleanVar(value=self.config.get("open_browser_on_load", True))
         self.install_in_progress = False
 
         self.apply_window_geometry()
@@ -340,6 +341,7 @@ class LlamaServerGUI:
                 "loaded": True,
                 "stopped": True
             },
+            "open_browser_on_load": True,
             "params": self.default_params.copy()
         }
 
@@ -372,6 +374,8 @@ class LlamaServerGUI:
                 "loaded": bool(loaded_sounds.get("loaded", config["sounds"]["loaded"])),
                 "stopped": bool(loaded_sounds.get("stopped", config["sounds"]["stopped"]))
             })
+
+        config["open_browser_on_load"] = bool(loaded_config.get("open_browser_on_load", config["open_browser_on_load"]))
 
         loaded_params = normalize_loaded_params(loaded_config.get("params", {}))
         for param, default_value in self.default_params.items():
@@ -434,6 +438,7 @@ class LlamaServerGUI:
                 "loaded": self.enable_loaded_sound_var.get(),
                 "stopped": self.enable_stopped_sound_var.get()
             },
+            "open_browser_on_load": self.open_browser_on_load_var.get(),
             "params": params
         }
 
@@ -531,6 +536,14 @@ class LlamaServerGUI:
             font=("Arial", 10, "bold"), command=self.restart_server, state=tk.DISABLED,
         )
         self.restart_btn.pack(side=tk.LEFT, padx=4)
+
+        tk.Frame(toolbar, width=12).pack(side=tk.LEFT)
+
+        self.open_browser_on_load_chk = tk.Checkbutton(
+            toolbar, text="Открыть браузер при загрузке", variable=self.open_browser_on_load_var,
+            font=("Arial", 9), command=self.on_browser_checkbox_changed,
+        )
+        self.open_browser_on_load_chk.pack(side=tk.LEFT, padx=4)
 
         self.status_label = tk.Label(toolbar, text="Статус: Остановлен", fg="red", font=("Arial", 10, "bold"))
         self.status_label.pack(side=tk.RIGHT, padx=4)
@@ -1054,6 +1067,9 @@ class LlamaServerGUI:
     def on_sound_settings_changed(self):
         self.save_config()
 
+    def on_browser_checkbox_changed(self):
+        self.save_config()
+
     def play_loaded_sound(self):
         if self.enable_loaded_sound_var.get():
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -1433,7 +1449,8 @@ class LlamaServerGUI:
             self.stop_loading_blink()
             self.status_label.config(text="Статус: Работает", fg="green")
             self.play_loaded_sound()
-            self.open_server_in_browser()
+            if self.open_browser_on_load_var.get():
+                self.open_server_in_browser()
 
     def set_stopped_state(self, play_sound=False):
         self.stop_loading_blink()

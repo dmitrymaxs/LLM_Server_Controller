@@ -11,7 +11,7 @@ PARAM_GROUPS = [
         "id": "main",
         "title": "Основные",
         "expanded": True,
-        "hint": "Наиболее часто используемые параметры (Гл. 45, §15)",
+        "hint": "Наиболее часто используемые параметры",
         "params": [
             {"key": "--ctx-size", "default": "16384", "hint": "Размер контекста"},
             {"key": "--n-gpu-layers", "default": "99", "hint": "Слои на GPU (-ngl)"},
@@ -103,7 +103,7 @@ PARAM_GROUPS = [
         "expanded": False,
         "params": [
             {"key": "--draft-model", "default": "", "hint": "Путь к draft-модели"},
-            {"key": "--draft-max", "default": "6", "hint": "Макс. draft-токенов"},
+            {"key": "--draft-max", "default": "", "hint": "Макс. draft-токенов"},
             {"key": "--draft-min", "default": "", "hint": "Мин. draft-токенов"},
             {"key": "--gpu-layers-draft", "default": "", "hint": "GPU-слои для draft-модели"},
         ],

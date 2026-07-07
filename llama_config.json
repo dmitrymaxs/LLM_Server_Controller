@@ -1,9 +1,14 @@
 {
-    "exe_path": "C:\\llama-vulkan\\llama-server.exe",
-    "model_path": "E:\\Tralalabs_Qwen3-2507-4B-Instruct-Haiku-4.5-Merged-Q5_K_M.gguf",
+    "exe_path": "F:\\work\\project\\LLM_Server_Controller\\test\\llama-server.exe",
+    "model_path": "E:\\Qwen3.6-27B-Fable-5-Distill.q4_k_m.gguf",
+    "install": {
+        "directory": "F:\\work\\project\\LLM_Server_Controller\\test",
+        "asset_label": "Windows x64 (Vulkan)",
+        "release_tag": "llama-b9870-bin-win-vulkan-x64.zip"
+    },
     "window": {
-        "width": "920",
-        "height": "760"
+        "width": "1000",
+        "height": "900"
     },
     "sounds": {
         "loaded": true,
@@ -11,13 +16,13 @@
     },
     "params": {
         "--ctx-size": "16384",
-        "--n-gpu-layers": "88",
-        "-fa": "auto",
+        "--n-gpu-layers": "99",
+        "-fa": "on",
         "--threads": "",
-        "--cache-type-k": "q4_0",
-        "--cache-type-v": "q4_0",
+        "--cache-type-k": "q8_0",
+        "--cache-type-v": "q8_0",
         "--no-mmap": true,
-        "--mlock": true,
+        "--mlock": false,
         "--host": "0.0.0.0",
         "--port": "18080",
         "--keep": "",
@@ -37,7 +42,7 @@
         "--prio": "",
         "--batch-size": "",
         "--ubatch-size": "",
-        "--temp": "0.7",
+        "--temp": "1.0",
         "--top-k": "64",
         "--top-p": "0.95",
         "--min-p": "",

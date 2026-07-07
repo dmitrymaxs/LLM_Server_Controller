@@ -220,3 +220,24 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 main_v_1.py
+LLM_Setup/Setup.md
+icon/icon1.png
+icon/icon02.png
+LLM_new/params_config.py
+Руководство по llama-server.epub
+LLM_new/params_config.py
+params_config.py.bak
+.~lock.Руководство по llama-server.epub#
+LLM_new/params_config.py
+llama_config.json.bak
+LlamaServerController.spec.bak
+icon/16х16.ico
+icon/16х16.png
+icon/24х24.ico
+icon/24х24.png
+icon/32х32.ico
+icon/32х32.png
+icon/64х64.ico
+icon/64х64.png
+icon/256х256.png
+icon/icon48х48.png
