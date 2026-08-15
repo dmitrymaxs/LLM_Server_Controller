@@ -5,7 +5,7 @@ LLM_new/
 __pycache__/
 build/
 dist/
-icon/
+
 .kilo/
 .kiro/
 .vs/
@@ -42,3 +42,16 @@ main_v_1.py
 
 # User configuration
 llama_config.json
+
+icon/*
+!icon/256х256.ico
+!icon/64х64.ico
+!icon/32х32.ico
+!icon/24х24.ico
+!icon/16х16.ico
+!icon/256х256.png
+!icon/64х64.png
+!icon/32х32.png
+!icon/24х24.png
+!icon/16х16.png
+!icon/icon48х48.png
