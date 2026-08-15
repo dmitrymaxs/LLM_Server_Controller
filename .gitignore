@@ -6,6 +6,18 @@ __pycache__/
 build/
 dist/
 icon/
+.kilo/
+.kiro/
+.vs/
+.vscode/
+.zed/
+archiv/
+llm_glm/
+llm_opencode/
+llm_test/
+llm_test_grok/
+llm_test_minimax/
+python_only/
 
 # Python backup files
 *.bak
@@ -13,6 +25,7 @@ icon/
 
 # Spec files
 *.spec
+!LLMServerController.spec
 
 # Lock files
 .~lock*
@@ -26,3 +39,6 @@ git_commands.txt
 
 # Backup/alternate versions
 main_v_1.py
+
+# User configuration
+llama_config.json
