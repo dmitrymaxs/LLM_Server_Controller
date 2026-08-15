@@ -1194,7 +1194,7 @@ class LlamaServerGUI:
         website_link.pack(anchor="w")
         website_link.bind("<Button-1>", lambda e: webbrowser.open("https://llm-server.github.io/"))
         
-        donate_btn = tk.Button(about_window, text="Donate", command=lambda: webbrowser.open("https://donatepay.eu/don/46859"))
+        donate_btn = tk.Button(about_window, text="Donate", command=lambda: webbrowser.open("pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"))
         donate_btn.pack(pady=(10, 10))
         
         close_btn = tk.Button(about_window, text="OK", command=about_window.destroy)
