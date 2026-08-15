@@ -26,11 +26,15 @@ jobs:
       - name: Build application
         run: pyinstaller LLMServerController-linux.spec
 
-      - name: Make executable
-        run: chmod +x dist/LLMServerController
+      - name: Create Linux archive
+        run: |
+          mkdir -p package
+          cp dist/LLMServerController package/
+          chmod +x package/LLMServerController
+          tar -czf LLMServerController-Linux-${{ github.ref_name }}.tar.gz -C package LLMServerController
 
       - name: Upload Linux build
         uses: actions/upload-artifact@v4
         with:
-          name: LLMServerController-Linux
-          path: dist/LLMServerController
+          name: LLMServerController-Linux-${{ github.ref_name }}
+          path: LLMServerController-Linux-${{ github.ref_name }}.tar.gz
