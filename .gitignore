@@ -26,6 +26,8 @@ python_only/
 # Spec files
 *.spec
 !LLMServerController.spec
+!LLMServerController-linux.spec
+
 
 # Lock files
 .~lock*
