@@ -38,7 +38,7 @@ APP_ICON_PNG_CANDIDATES = [
     "16х16.png",
     "icon48х48.png",
 ]
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
@@ -83,7 +83,7 @@ def get_user_config_path():
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Server Controller v.0.1.0")
+        self.root.title("LLM Server Controller v.0.1.1")
         self.root.geometry("1000x900")
         self.apply_app_icon()
 
