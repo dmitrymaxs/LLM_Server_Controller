@@ -14,7 +14,7 @@ LLM Server Controller is a graphical application for configuring
 and controlling llama.cpp server.
 
 %prep
-%setup -q
+%setup -q -n LLMServerController-%{version}
 
 %install
 mkdir -p %{buildroot}/usr/bin
