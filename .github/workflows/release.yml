@@ -69,31 +69,20 @@ jobs:
           echo "LINUX_RUN=$LINUX_RUN" >> "$GITHUB_OUTPUT"
 
       - name: Download Windows artifact
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          WINDOWS_RUN: ${{ steps.runs.outputs.WINDOWS_RUN }}
-        run: |
-          mkdir -p release/windows
-
-          gh run download "$WINDOWS_RUN" \
-            --repo "$REPO" \
-            --name LLMServerController-Windows \
-            --dir release/windows
+        uses: actions/download-artifact@v5
+        with:
+          name: LLMServerController-Windows
+          path: release/windows
+          run-id: ${{ steps.runs.outputs.WINDOWS_RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download Linux artifact
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          LINUX_RUN: ${{ steps.runs.outputs.LINUX_RUN }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          mkdir -p release/linux
-
-          gh run download "$LINUX_RUN" \
-            --repo "$REPO" \
-            --name "LLMServerController-Linux-v$TAG" \
-            --dir release/linux
+        uses: actions/download-artifact@v5
+        with:
+          name: LLMServerController-Linux-v${{ inputs.tag }}
+          path: release/linux
+          run-id: ${{ steps.runs.outputs.LINUX_RUN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List release files
         run: |
