@@ -61,6 +61,12 @@ FALLBACK_ASSETS: List[Dict[str, Any]] = [
     },
 ]
 
+FALLBACK_LINUX_ASSETS: List[Dict[str, Any]] = [
+    {"label": "Linux x64 (Vulkan)", "asset": f"llama-{FALLBACK_TAG}-bin-ubuntu-vulkan-x64.tar.gz", "dll_asset": None, "arch": "x64", "backend": "Vulkan", "recommended": True, "browser_download_url": f"{GITHUB_DOWNLOAD_BASE}/{FALLBACK_TAG}/llama-{FALLBACK_TAG}-bin-ubuntu-vulkan-x64.tar.gz"},
+    {"label": "Linux x64 (CPU)", "asset": f"llama-{FALLBACK_TAG}-bin-ubuntu-x64.tar.gz", "dll_asset": None, "arch": "x64", "backend": "CPU", "recommended": False, "browser_download_url": f"{GITHUB_DOWNLOAD_BASE}/{FALLBACK_TAG}/llama-{FALLBACK_TAG}-bin-ubuntu-x64.tar.gz"},
+]
+
+
 
 def _http_get_json(url: str, timeout: int = 30) -> Any:
     request = urllib.request.Request(
@@ -227,6 +233,50 @@ def parse_windows_assets_from_release(release: Dict[str, Any]) -> List[Dict[str,
 
     result.sort(key=sort_key)
     return result
+
+def _classify_linux_asset(name: str) -> Optional[Dict[str, Any]]:
+    lower = name.lower()
+    if not lower.endswith(".tar.gz") or "ubuntu" not in lower or "x64" not in lower:
+        return None
+    if "vulkan" in lower:
+        return {"label": "Linux x64 (Vulkan)", "asset": name, "dll_asset": None, "arch": "x64", "backend": "Vulkan", "recommended": True}
+    if re.search(r"-bin-ubuntu-x64\.tar\.gz$", lower):
+        return {"label": "Linux x64 (CPU)", "asset": name, "dll_asset": None, "arch": "x64", "backend": "CPU", "recommended": False}
+    return None
+
+def parse_linux_assets_from_release(release: Dict[str, Any]) -> List[Dict[str, Any]]:
+    result = []
+    for item in release.get("assets") or []:
+        name = item.get("name") or ""
+        classified = _classify_linux_asset(name)
+        if not classified:
+            continue
+        classified["browser_download_url"] = item.get("browser_download_url") or f"{GITHUB_DOWNLOAD_BASE}/{release.get('tag_name', '')}/{name}"
+        classified["size"] = item.get("size") or 0
+        result.append(classified)
+    result.sort(key=lambda a: (0 if a.get("recommended") else 10, a.get("label", "")))
+    return result
+
+def fetch_linux_assets(tag: Optional[str] = None, timeout: int = 30) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
+    try:
+        if not tag:
+            tag = fetch_latest_release_tag(timeout=timeout)
+        release = fetch_release(tag, timeout=timeout)
+        actual_tag = str(release.get("tag_name") or tag)
+        assets = parse_linux_assets_from_release(release)
+        if not assets:
+            return actual_tag, [dict(a) for a in FALLBACK_LINUX_ASSETS], f"В релизе {actual_tag} не найдены Linux-сборки; показан запасной список."
+        return actual_tag, assets, None
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError, RuntimeError) as exc:
+        assets = []
+        for item in FALLBACK_LINUX_ASSETS:
+            copy = dict(item)
+            if tag and tag != FALLBACK_TAG:
+                copy["asset"] = copy["asset"].replace(FALLBACK_TAG, tag)
+                copy["browser_download_url"] = f"{GITHUB_DOWNLOAD_BASE}/{tag}/{copy['asset']}"
+            assets.append(copy)
+        return tag or FALLBACK_TAG, assets, f"Не удалось загрузить список Linux-сборок с GitHub ({exc}). Используется запасной список."
+
 
 
 def fetch_windows_assets(

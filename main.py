@@ -10,7 +10,13 @@ import tkinter as tk
 import urllib.request
 import webbrowser
 import zipfile
-import winsound
+import tarfile
+
+if sys.platform == "win32":
+    import winsound
+else:
+    winsound = None
+
 from tkinter import scrolledtext, messagebox, filedialog
 
 from params_config import (
@@ -19,7 +25,7 @@ from params_config import (
     build_default_params,
     normalize_loaded_params,
 )
-from releases import fetch_windows_assets, build_download_url
+from releases import fetch_windows_assets, fetch_linux_assets, build_download_url
 
 CONFIG_FILE = "llama_config.json"
 APP_ICON_ICO_CANDIDATES = [
@@ -44,7 +50,8 @@ APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
 LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
-LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)"
+LLAMA_SERVER_FILENAME = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)" if sys.platform == "win32" else "Linux x64 (Vulkan)"
 
 
 def get_app_base_dir():
@@ -653,10 +660,13 @@ class LlamaServerGUI:
                     break
 
     def browse_exe(self):
-        file_path = filedialog.askopenfilename(
-            title="Выберите llama-server.exe",
-            filetypes=[("Исполняемые файлы", "*.exe"), ("Все файлы", "*.*")]
-        )
+        if sys.platform == "win32":
+            title = "Выберите llama-server.exe"
+            filetypes = [("Исполняемые файлы", "*.exe"), ("Все файлы", "*.*")]
+        else:
+            title = "Выберите llama-server"
+            filetypes = [("Исполняемые файлы", "*"), ("Все файлы", "*.*")]
+        file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
         if file_path:
             self.exe_entry.delete(0, tk.END)
             self.exe_entry.insert(0, os.path.normpath(file_path))
@@ -668,10 +678,6 @@ class LlamaServerGUI:
         if self.is_running:
             messagebox.showwarning("Внимание", "Нельзя устанавливать llama.cpp во время работы сервера.")
             return
-        if sys.platform != "win32":
-            messagebox.showerror("Ошибка", "Установка llama.cpp через этот диалог поддерживается только на Windows.")
-            return
-
         preferred_tag = self.config.get("install", {}).get("release_tag") or ""
         if preferred_tag and not re.match(r"^b\d+$", preferred_tag):
             preferred_tag = ""
@@ -687,7 +693,10 @@ class LlamaServerGUI:
 
     def _fetch_assets_and_prompt(self, preferred_tag):
         try:
-            tag, assets, warning = fetch_windows_assets(tag=preferred_tag or None, timeout=45)
+            if sys.platform == "win32":
+                tag, assets, warning = fetch_windows_assets(tag=preferred_tag or None, timeout=45)
+            else:
+                tag, assets, warning = fetch_linux_assets(tag=preferred_tag or None, timeout=45)
             self.root.after(0, lambda: self._on_assets_loaded(tag, assets, warning))
         except Exception as exc:
             error_message = str(exc) or exc.__class__.__name__
@@ -700,7 +709,7 @@ class LlamaServerGUI:
         self.current_release_tag = tag
         if warning:
             self.log(f"{warning}\n")
-        self.log(f"Релиз: {tag}, сборок Windows: {len(assets)}\n")
+        self.log(f"Релиз: {tag}, сборок: {len(assets)}\n")
 
         selected_asset = self._prompt_llama_asset(assets, tag)
         if not selected_asset:
@@ -751,7 +760,7 @@ class LlamaServerGUI:
 
         tk.Label(
             dialog,
-            text=f"Выберите Windows-сборку llama.cpp — релиз {release_tag}",
+            text=f"Выберите {'Windows' if sys.platform == 'win32' else 'Linux'}-сборку llama.cpp — релиз {release_tag}",
             font=("Arial", 10, "bold"),
             anchor=tk.W,
             justify=tk.LEFT,
@@ -825,16 +834,21 @@ class LlamaServerGUI:
             os.makedirs(install_dir, exist_ok=True)
             main_archive_path = os.path.join(temp_dir, selected_asset["asset"])
             self._download_file(archive_url, main_archive_path, selected_asset["asset"], release_tag)
-            self._extract_zip(main_archive_path, install_dir)
+            if sys.platform == "win32":
+                self._extract_zip(main_archive_path, install_dir)
+            else:
+                self._extract_tar_gz(main_archive_path, install_dir)
 
             if dll_url and dll_asset:
                 dll_archive_path = os.path.join(temp_dir, dll_asset)
                 self._download_file(dll_url, dll_archive_path, dll_asset, release_tag)
                 self._extract_zip(dll_archive_path, install_dir)
 
-            exe_path = self._find_llama_server_exe(install_dir)
+            exe_path = self._find_llama_server(install_dir)
             if not exe_path:
-                raise FileNotFoundError("Не найден llama-server.exe после распаковки архива.")
+                raise FileNotFoundError(f"Не найден {LLAMA_SERVER_FILENAME} после распаковки архива.")
+            if sys.platform != "win32":
+                os.chmod(exe_path, os.stat(exe_path).st_mode | 0o111)
             if dll_asset:
                 self._copy_dlls_to_exe_dir(install_dir, os.path.dirname(exe_path))
 
@@ -880,10 +894,20 @@ class LlamaServerGUI:
         with zipfile.ZipFile(archive_path, "r") as archive:
             archive.extractall(install_dir)
 
-    def _find_llama_server_exe(self, install_dir):
+    def _extract_tar_gz(self, archive_path, install_dir):
+        self.root.after(0, lambda: self.log(f"Распаковка: {os.path.basename(archive_path)} -> {install_dir}\n"))
+        install_dir = os.path.abspath(install_dir)
+        with tarfile.open(archive_path, "r:gz") as archive:
+            for member in archive.getmembers():
+                member_path = os.path.abspath(os.path.join(install_dir, member.name))
+                if not (member_path == install_dir or member_path.startswith(install_dir + os.sep)):
+                    raise RuntimeError(f"Небезопасный путь в архиве: {member.name}")
+            archive.extractall(install_dir)
+
+    def _find_llama_server(self, install_dir):
         for root_dir, _dirs, files in os.walk(install_dir):
-            if "llama-server.exe" in files:
-                return os.path.normpath(os.path.join(root_dir, "llama-server.exe"))
+            if LLAMA_SERVER_FILENAME in files:
+                return os.path.normpath(os.path.join(root_dir, LLAMA_SERVER_FILENAME))
         return ""
 
     def _copy_dlls_to_exe_dir(self, install_dir, exe_dir):
@@ -913,7 +937,7 @@ class LlamaServerGUI:
         self.log(f"Установка завершена. Найден исполняемый файл: {exe_path}\n\n")
         messagebox.showinfo(
             "Установка завершена",
-            f"llama.cpp установлен в:\n{install_dir}\n\nСборка: {selected_asset['label']}\nllama-server.exe:\n{exe_path}",
+            f"llama.cpp установлен в:\n{install_dir}\n\nСборка: {selected_asset['label']}\n{LLAMA_SERVER_FILENAME}:\n{exe_path}",
         )
 
     def _handle_llama_install_error(self, error_message):
@@ -935,7 +959,7 @@ class LlamaServerGUI:
     def list_devices(self):
         exe_path = os.path.normpath(self.exe_entry.get().strip())
         if not exe_path or not os.path.exists(exe_path):
-            messagebox.showerror("Ошибка", "Укажите корректный путь к llama-server.exe")
+            messagebox.showerror("Ошибка", f"Укажите корректный путь к {LLAMA_SERVER_FILENAME}")
             return
 
         self.list_devices_btn.config(state=tk.DISABLED, text="Загрузка...")
@@ -1035,11 +1059,11 @@ class LlamaServerGUI:
         self.save_config()
 
     def play_loaded_sound(self):
-        if self.enable_loaded_sound_var.get():
+        if sys.platform == "win32" and self.enable_loaded_sound_var.get():
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
 
     def play_stopped_sound(self):
-        if self.enable_stopped_sound_var.get():
+        if sys.platform == "win32" and self.enable_stopped_sound_var.get():
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
 
     def start_loading_blink(self):
@@ -1120,10 +1144,10 @@ class LlamaServerGUI:
         help_text = (
             "LLM Server Controller — справка\n\n"
             "Назначение программы:\n"
-            "Приложение позволяет выбрать llama-server.exe, указать GGUF-модель, настроить параметры запуска,\n"
+            "Приложение позволяет выбрать llama-server, указать GGUF-модель, настроить параметры запуска,\n"
             "запустить сервер, остановить его, перезапустить и просматривать логи.\n\n"
             "Описание полей:\n"
-            "Сервер — путь к файлу llama-server.exe.\n"
+            "Сервер — путь к файлу llama-server.\n"
             "Устройства — запускает llama-server --list-devices и показывает доступные GPU/CPU\n"
             "устройства перед настройкой --device.\n"
             "Модель — путь к файлу модели в формате .gguf.\n"
@@ -1145,7 +1169,7 @@ class LlamaServerGUI:
             "Импорт настроек — загружает настройки из внешнего JSON-файла.\n"
             "Экспорт настроек — сохраняет текущие настройки в выбранный JSON-файл.\n"
             "Сбросить параметры — возвращает параметры и размеры окна к значениям по умолчанию.\n"
-            "Запустить сервер — запускает llama-server.exe с текущими параметрами.\n"
+            "Запустить сервер — запускает llama-server с текущими параметрами.\n"
             "Остановить — завершает работающий сервер.\n"
             "Перезапустить — останавливает и снова запускает сервер с текущими настройками.\n"
             "Сохранить лог — сохраняет видимые логи в файл .log или .txt.\n"
@@ -1157,7 +1181,7 @@ class LlamaServerGUI:
             "Выход — закрытие приложения с сохранением текущих настроек.\n\n"
             "Замечания:\n"
             "Некоторые параметры зависят от версии llama-server и вашей сборки.\n"
-            "Если сервер не запускается, проверьте путь к exe, путь к модели и совместимость параметров."
+            "Если сервер не запускается, проверьте путь к серверу, путь к модели и совместимость параметров."
         )
 
         help_window = tk.Toplevel(self.root)
@@ -1178,25 +1202,25 @@ class LlamaServerGUI:
         about_window.title("О программе")
         about_window.transient(self.root)
         about_window.grab_set()
-        
+
         info_lines = [
             ("LLM Server Controller", None),
             (f"Version: {APP_VERSION}", None),
             (f"Author: {APP_AUTHOR}", None),
             (f"License: {APP_LICENSE}", None),
         ]
-        
+
         for text, url in info_lines:
             lbl = tk.Label(about_window, text=text, justify=tk.LEFT, padx=20, pady=2)
             lbl.pack(anchor="w")
-        
+
         website_link = tk.Label(about_window, text="Website: https://llm-server.github.io/", justify=tk.LEFT, padx=20, pady=2, fg="blue", cursor="hand2")
         website_link.pack(anchor="w")
         website_link.bind("<Button-1>", lambda e: webbrowser.open("https://llm-server.github.io/"))
-        
+
         donate_btn = tk.Button(about_window, text="Donate", command=lambda: webbrowser.open("pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"))
         donate_btn.pack(pady=(10, 10))
-        
+
         close_btn = tk.Button(about_window, text="OK", command=about_window.destroy)
         close_btn.pack(pady=(0, 10))
 
@@ -1331,7 +1355,7 @@ class LlamaServerGUI:
         model_path = os.path.normpath(self.model_entry.get().strip())
 
         if not exe_path or not os.path.exists(exe_path):
-            messagebox.showerror("Ошибка", "Укажите корректный путь к llama-server.exe")
+            messagebox.showerror("Ошибка", f"Укажите корректный путь к {LLAMA_SERVER_FILENAME}")
             return
         if not model_path or not os.path.exists(model_path):
             messagebox.showerror("Ошибка", "Укажите корректный путь к файлу модели (.gguf)")
