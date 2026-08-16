@@ -1,0 +1,116 @@
+name: Create GitHub Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Find Windows and Linux workflow runs
+        id: runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Looking for successful builds for tag: $TAG"
+
+          SHA=$(gh api \
+            "repos/$REPO/git/ref/tags/$TAG" \
+            --jq '.object.sha')
+
+          echo "Tag commit: $SHA"
+
+          WINDOWS_RUN=$(gh run list \
+            --repo "$REPO" \
+            --workflow build-windows.yml \
+            --event push \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha \
+            --jq ".[] | select(.headSha == \"$SHA\") | .databaseId" \
+            | head -n 1)
+
+          LINUX_RUN=$(gh run list \
+            --repo "$REPO" \
+            --workflow build-linux.yml \
+            --event push \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha \
+            --jq ".[] | select(.headSha == \"$SHA\") | .databaseId" \
+            | head -n 1)
+
+          if [ -z "$WINDOWS_RUN" ]; then
+            echo "ERROR: Windows build not found for $TAG"
+            exit 1
+          fi
+
+          if [ -z "$LINUX_RUN" ]; then
+            echo "ERROR: Linux build not found for $TAG"
+            exit 1
+          fi
+
+          echo "Windows run: $WINDOWS_RUN"
+          echo "Linux run:   $LINUX_RUN"
+
+          echo "WINDOWS_RUN=$WINDOWS_RUN" >> "$GITHUB_OUTPUT"
+          echo "LINUX_RUN=$LINUX_RUN" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          WINDOWS_RUN: ${{ steps.runs.outputs.WINDOWS_RUN }}
+        run: |
+          mkdir -p release/windows
+
+          gh run download "$WINDOWS_RUN" \
+            --repo "$REPO" \
+            --name LLMServerController-Windows \
+            --dir release/windows
+
+      - name: Download Linux artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          LINUX_RUN: ${{ steps.runs.outputs.LINUX_RUN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          mkdir -p release/linux
+
+          gh run download "$LINUX_RUN" \
+            --repo "$REPO" \
+            --name "LLMServerController-Linux-v$TAG" \
+            --dir release/linux
+
+      - name: List release files
+        run: |
+          echo "Windows files:"
+          find release/windows -type f -ls
+
+          echo "Linux files:"
+          find release/linux -type f -ls
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "LLM Server Controller $TAG" \
+            --generate-notes \
+            release/windows/* \
+            release/linux/*
