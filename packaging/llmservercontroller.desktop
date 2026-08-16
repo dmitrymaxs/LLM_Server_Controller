@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LLM Server Controller
+GenericName=LLM Server Controller
+Comment=Graphical controller for llama.cpp server
+Exec=/usr/bin/LLMServerController
+Icon=llmservercontroller
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true

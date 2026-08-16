@@ -21,20 +21,189 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: |
+          python -m pip install -r requirements.txt
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev rpm desktop-file-utils
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0+manual.${GITHUB_SHA::7}"
+          fi
+
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building version: ${VERSION}"
+
+      - name: Validate desktop file
+        run: |
+          desktop-file-validate packaging/llmservercontroller.desktop
 
       - name: Build application
-        run: pyinstaller LLMServerController-linux.spec
-
-      - name: Create Linux archive
         run: |
-          mkdir -p package
-          cp dist/LLMServerController package/
-          chmod +x package/LLMServerController
-          tar -czf LLMServerController-Linux-${{ github.ref_name }}.tar.gz -C package LLMServerController
+          pyinstaller LLMServerController-linux.spec
 
-      - name: Upload Linux build
+      - name: Prepare package files
+        run: |
+          rm -rf package
+          mkdir -p package
+
+          cp dist/LLMServerController package/
+          cp packaging/llmservercontroller.desktop package/
+
+          cp "icon/16х16.png" package/16x16.png
+          cp "icon/24х24.png" package/24x24.png
+          cp "icon/32х32.png" package/32x32.png
+          cp "icon/icon48х48.png" package/48x48.png
+          cp "icon/64х64.png" package/64x64.png
+          cp "icon/256х256.png" package/256x256.png
+
+          chmod +x package/LLMServerController
+
+      - name: Create TAR.GZ archive
+        run: |
+          tar -czf \
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz \
+            -C package \
+            LLMServerController
+
+      - name: Create Debian package
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          rm -rf deb
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/usr/bin
+          mkdir -p deb/usr/share/applications
+
+          mkdir -p deb/usr/share/icons/hicolor/16x16/apps
+          mkdir -p deb/usr/share/icons/hicolor/24x24/apps
+          mkdir -p deb/usr/share/icons/hicolor/32x32/apps
+          mkdir -p deb/usr/share/icons/hicolor/48x48/apps
+          mkdir -p deb/usr/share/icons/hicolor/64x64/apps
+          mkdir -p deb/usr/share/icons/hicolor/256x256/apps
+
+          cp package/LLMServerController \
+            deb/usr/bin/LLMServerController
+
+          cp package/llmservercontroller.desktop \
+            deb/usr/share/applications/llmservercontroller.desktop
+
+          cp package/16x16.png \
+            deb/usr/share/icons/hicolor/16x16/apps/llmservercontroller.png
+
+          cp package/24x24.png \
+            deb/usr/share/icons/hicolor/24x24/apps/llmservercontroller.png
+
+          cp package/32x32.png \
+            deb/usr/share/icons/hicolor/32x32/apps/llmservercontroller.png
+
+          cp package/48x48.png \
+            deb/usr/share/icons/hicolor/48x48/apps/llmservercontroller.png
+
+          cp package/64x64.png \
+            deb/usr/share/icons/hicolor/64x64/apps/llmservercontroller.png
+
+          cp package/256x256.png \
+            deb/usr/share/icons/hicolor/256x256/apps/llmservercontroller.png
+
+          chmod 0755 deb/usr/bin/LLMServerController
+
+          cat > deb/DEBIAN/control <<EOF
+          Package: llmservercontroller
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Dmitry Maksymov
+          Homepage: https://github.com/dmitrymaxs/LLM_Server_Controller
+          Description: LLM Server Controller
+           Graphical controller for llama.cpp server.
+           Configure and control llama.cpp server from a graphical interface.
+          EOF
+
+          dpkg-deb --build --root-owner-group \
+            deb \
+            LLMServerController-Linux-v${VERSION}.deb
+
+      - name: Prepare RPM source archive
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          rm -rf rpm-source
+          mkdir -p rpm-source/LLMServerController-${VERSION}
+
+          cp package/LLMServerController \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/llmservercontroller.desktop \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/16x16.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/24x24.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/32x32.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/48x48.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/64x64.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          cp package/256x256.png \
+            rpm-source/LLMServerController-${VERSION}/
+
+          tar -czf \
+            rpm-source/LLMServerController-${VERSION}.tar.gz \
+            -C rpm-source \
+            LLMServerController-${VERSION}
+
+      - name: Build RPM package
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          mkdir -p rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+
+          cp \
+            rpm-source/LLMServerController-${VERSION}.tar.gz \
+            rpmbuild/SOURCES/
+
+          sed "s/%{version}/${VERSION}/g" \
+            packaging/rpm/llmservercontroller.spec \
+            > rpmbuild/SPECS/llmservercontroller.spec
+
+          rpmbuild \
+            --define "_topdir $(pwd)/rpmbuild" \
+            --define "_version ${VERSION}" \
+            -ba rpmbuild/SPECS/llmservercontroller.spec
+
+          cp \
+            rpmbuild/RPMS/x86_64/*.rpm \
+            LLMServerController-Linux-v${VERSION}.rpm
+
+      - name: List release files
+        run: |
+          ls -lh \
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz \
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.deb \
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
+
+      - name: Upload Linux release
         uses: actions/upload-artifact@v4
         with:
-          name: LLMServerController-Linux-${{ github.ref_name }}
-          path: LLMServerController-Linux-${{ github.ref_name }}.tar.gz
+          name: LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}
+          path: |
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.deb
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
