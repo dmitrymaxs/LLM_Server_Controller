@@ -8,6 +8,23 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+
+
+def _tr(language: str, key: str, **kwargs) -> str:
+    from i18n import TRANSLATIONS
+    entry = TRANSLATIONS.get(key)
+    if entry is None:
+        return key
+    lang = language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
+    text = entry.get(lang, entry.get(DEFAULT_LANGUAGE, key))
+    if kwargs:
+        try:
+            text = text.format(**kwargs)
+        except (KeyError, IndexError, ValueError):
+            pass
+    return text
+
 GITHUB_API_RELEASES = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
 GITHUB_DOWNLOAD_BASE = "https://github.com/ggml-org/llama.cpp/releases/download"
 USER_AGENT = "LLM-Server-Controller/0.1 (+https://github.com/ggml-org/llama.cpp)"
@@ -85,14 +102,36 @@ def fetch_latest_release_tag(timeout: int = 30) -> str:
     data = _http_get_json(f"{GITHUB_API_RELEASES}/latest", timeout=timeout)
     tag = data.get("tag_name") or data.get("name") or ""
     if not tag:
-        raise RuntimeError("GitHub API не вернул tag_name для latest release")
+        raise RuntimeError("GitHub API did not return tag_name for latest release")
     return str(tag)
+
+
+def fetch_recent_releases(timeout: int = 30, per_page: int = 40) -> List[Dict[str, Any]]:
+    return _http_get_json(f"{GITHUB_API_RELEASES}?per_page={per_page}", timeout=timeout)
+
+
+def _pick_release_with_assets(
+    releases: List[Dict[str, Any]],
+    parser,
+) -> Optional[Dict[str, Any]]:
+    """Возвращает самый новый релиз, у которого есть подходящие сборки.
+
+    /releases/latest у llama.cpp указывает на старый стабильный тег (v0.x),
+    к которому бинарные архивы не прикладываются; актуальные сборки живут
+    в свежих пре-релизах (bNNNNN), поэтому ищем по списку от нового к старому.
+    """
+    for release in releases:
+        if release.get("draft"):
+            continue
+        if parser(release):
+            return release
+    return None
 
 
 def fetch_release(tag: str, timeout: int = 30) -> Dict[str, Any]:
     tag = tag.strip()
     if not tag:
-        raise ValueError("Пустой release tag")
+        raise ValueError("Empty release tag")
     return _http_get_json(f"{GITHUB_API_RELEASES}/tags/{tag}", timeout=timeout)
 
 
@@ -257,15 +296,19 @@ def parse_linux_assets_from_release(release: Dict[str, Any]) -> List[Dict[str, A
     result.sort(key=lambda a: (0 if a.get("recommended") else 10, a.get("label", "")))
     return result
 
-def fetch_linux_assets(tag: Optional[str] = None, timeout: int = 30) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
+def fetch_linux_assets(tag: Optional[str] = None, timeout: int = 30, language: str = DEFAULT_LANGUAGE) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
     try:
         if not tag:
-            tag = fetch_latest_release_tag(timeout=timeout)
-        release = fetch_release(tag, timeout=timeout)
+            releases = fetch_recent_releases(timeout=timeout)
+            release = _pick_release_with_assets(releases, parse_linux_assets_from_release)
+            if release is None:
+                release = _http_get_json(f"{GITHUB_API_RELEASES}/latest", timeout=timeout)
+        else:
+            release = fetch_release(tag, timeout=timeout)
         actual_tag = str(release.get("tag_name") or tag)
         assets = parse_linux_assets_from_release(release)
         if not assets:
-            return actual_tag, [dict(a) for a in FALLBACK_LINUX_ASSETS], f"В релизе {actual_tag} не найдены Linux-сборки; показан запасной список."
+            return actual_tag, [dict(a) for a in FALLBACK_LINUX_ASSETS], _tr(language, "rels_no_linux_builds", tag=actual_tag)
         return actual_tag, assets, None
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError, RuntimeError) as exc:
         assets = []
@@ -275,23 +318,28 @@ def fetch_linux_assets(tag: Optional[str] = None, timeout: int = 30) -> Tuple[st
                 copy["asset"] = copy["asset"].replace(FALLBACK_TAG, tag)
                 copy["browser_download_url"] = f"{GITHUB_DOWNLOAD_BASE}/{tag}/{copy['asset']}"
             assets.append(copy)
-        return tag or FALLBACK_TAG, assets, f"Не удалось загрузить список Linux-сборок с GitHub ({exc}). Используется запасной список."
+        return tag or FALLBACK_TAG, assets, _tr(language, "rels_fetch_linux_failed", error=exc)
 
 
 
 def fetch_windows_assets(
     tag: Optional[str] = None,
     timeout: int = 30,
+    language: str = DEFAULT_LANGUAGE,
 ) -> Tuple[str, List[Dict[str, Any]], Optional[str]]:
     try:
         if not tag:
-            tag = fetch_latest_release_tag(timeout=timeout)
-        release = fetch_release(tag, timeout=timeout)
+            releases = fetch_recent_releases(timeout=timeout)
+            release = _pick_release_with_assets(releases, parse_windows_assets_from_release)
+            if release is None:
+                release = _http_get_json(f"{GITHUB_API_RELEASES}/latest", timeout=timeout)
+        else:
+            release = fetch_release(tag, timeout=timeout)
         actual_tag = str(release.get("tag_name") or tag)
         assets = parse_windows_assets_from_release(release)
         if not assets:
             return actual_tag, [dict(a) for a in FALLBACK_ASSETS], (
-                f"В релизе {actual_tag} не найдены Windows-сборки; показан запасной список."
+                _tr(language, "rels_no_win_builds", tag=actual_tag)
             )
         return actual_tag, assets, None
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, json.JSONDecodeError, RuntimeError) as exc:
@@ -307,7 +355,7 @@ def fetch_windows_assets(
                 )
             assets.append(copy)
         used_tag = tag or FALLBACK_TAG
-        return used_tag, assets, f"Не удалось загрузить список с GitHub ({exc}). Используется запасной список."
+        return used_tag, assets, _tr(language, "rels_fetch_win_failed", error=exc)
 
 
 def build_download_url(tag: str, asset_name: str, asset_entry: Optional[Dict[str, Any]] = None) -> str:

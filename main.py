@@ -26,6 +26,7 @@ from params_config import (
     normalize_loaded_params,
 )
 from releases import fetch_windows_assets, fetch_linux_assets, build_download_url
+from i18n import I18n, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 CONFIG_FILE = "llama_config.json"
 APP_ICON_ICO_CANDIDATES = [
@@ -44,7 +45,7 @@ APP_ICON_PNG_CANDIDATES = [
     "16х16.png",
     "icon48х48.png",
 ]
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.6"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
@@ -90,7 +91,7 @@ def get_user_config_path():
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Server Controller v.0.1.1")
+        self.root.title("LLM Server Controller v.0.1.6")
         self.root.geometry("1000x900")
         self.apply_app_icon()
 
@@ -107,6 +108,7 @@ class LlamaServerGUI:
         self.default_config = self.get_default_config()
 
         self.config = self.load_config()
+        self.i18n = I18n(self.config.get("language", DEFAULT_LANGUAGE))
         self.param_entries = {}
         self.param_group_frames = {}
         self.param_group_meta = {}
@@ -217,39 +219,41 @@ class LlamaServerGUI:
         menu_bar = tk.Menu(self.root)
 
         file_menu = tk.Menu(menu_bar, tearoff=0)
-        file_menu.add_command(label="Импорт", command=self.import_settings)
-        file_menu.add_command(label="Экспорт", command=self.export_settings)
+        file_menu.add_command(label=self.tr("menu_import"), command=self.import_settings)
+        file_menu.add_command(label=self.tr("menu_export"), command=self.export_settings)
         file_menu.add_separator()
-        file_menu.add_command(label="Установить llama.cpp", command=self.install_llama_cpp)
+        file_menu.add_command(label=self.tr("menu_install_llama"), command=self.install_llama_cpp)
         file_menu.add_separator()
-        file_menu.add_command(label="Выход", command=self.on_close)
+        file_menu.add_command(label=self.tr("menu_exit"), command=self.on_close)
 
         help_menu = tk.Menu(menu_bar, tearoff=0)
-        help_menu.add_command(label="Справка", command=self.show_help)
+        help_menu.add_command(label=self.tr("menu_help_help"), command=self.show_help)
         help_menu.add_separator()
-        help_menu.add_command(label="О программе", command=self.show_about)
+        help_menu.add_command(label=self.tr("menu_about"), command=self.show_about)
 
         sound_menu = tk.Menu(menu_bar, tearoff=0)
-        sound_menu.add_checkbutton(label="Звук загрузки", variable=self.enable_loaded_sound_var, command=self.on_sound_settings_changed)
-        sound_menu.add_checkbutton(label="Звук отключения", variable=self.enable_stopped_sound_var, command=self.on_sound_settings_changed)
+        sound_menu.add_checkbutton(label=self.tr("menu_sound_loaded"), variable=self.enable_loaded_sound_var, command=self.on_sound_settings_changed)
+        sound_menu.add_checkbutton(label=self.tr("menu_sound_stopped"), variable=self.enable_stopped_sound_var, command=self.on_sound_settings_changed)
 
         params_menu = tk.Menu(menu_bar, tearoff=0)
         for group in PARAM_GROUPS:
             params_menu.add_command(
-                label=group["title"],
+                label=self.i18n.group_title(group["id"]),
                 command=lambda gid=group["id"]: self.show_param_section(gid),
             )
 
-        menu_bar.add_cascade(label="Файл", menu=file_menu)
-        menu_bar.add_cascade(label="Параметры", menu=params_menu)
-        menu_bar.add_cascade(label="Звуки", menu=sound_menu)
-        menu_bar.add_cascade(label="Справка", menu=help_menu)
+        menu_bar.add_cascade(label=self.tr("menu_file"), menu=file_menu)
+        menu_bar.add_cascade(label=self.tr("menu_params"), menu=params_menu)
+        menu_bar.add_cascade(label=self.tr("menu_sounds"), menu=sound_menu)
+        menu_bar.add_cascade(label=self.tr("menu_help"), menu=help_menu)
         self.root.config(menu=menu_bar)
+        self.menu_bar = menu_bar
 
     def get_default_config(self):
         return {
             "exe_path": "",
             "model_path": "",
+            "language": DEFAULT_LANGUAGE,
             "install": {
                 "directory": "",
                 "asset_label": LLAMA_CPP_RECOMMENDED_LABEL,
@@ -264,6 +268,7 @@ class LlamaServerGUI:
                 "stopped": True
             },
             "open_browser_on_load": True,
+            "custom_args": "",
             "params": self.default_params.copy()
         }
 
@@ -274,6 +279,10 @@ class LlamaServerGUI:
 
         config["exe_path"] = loaded_config.get("exe_path", "")
         config["model_path"] = loaded_config.get("model_path", "")
+
+        loaded_language = loaded_config.get("language", "")
+        if loaded_language in SUPPORTED_LANGUAGES:
+            config["language"] = loaded_language
 
         loaded_install = loaded_config.get("install", {})
         if isinstance(loaded_install, dict):
@@ -298,6 +307,8 @@ class LlamaServerGUI:
             })
 
         config["open_browser_on_load"] = bool(loaded_config.get("open_browser_on_load", config["open_browser_on_load"]))
+        loaded_custom_args = loaded_config.get("custom_args", "")
+        config["custom_args"] = loaded_custom_args if isinstance(loaded_custom_args, str) else str(loaded_custom_args or "")
 
         loaded_params = normalize_loaded_params(loaded_config.get("params", {}))
         for param, default_value in self.default_params.items():
@@ -347,6 +358,7 @@ class LlamaServerGUI:
         return {
             "exe_path": os.path.normpath(self.exe_entry.get().strip()) if hasattr(self, "exe_entry") else self.config.get("exe_path", ""),
             "model_path": os.path.normpath(self.model_entry.get().strip()) if hasattr(self, "model_entry") else self.config.get("model_path", ""),
+            "language": self.i18n.language,
             "install": {
                 "directory": self.config.get("install", {}).get("directory", ""),
                 "asset_label": self.config.get("install", {}).get("asset_label", LLAMA_CPP_RECOMMENDED_LABEL),
@@ -361,6 +373,7 @@ class LlamaServerGUI:
                 "stopped": self.enable_stopped_sound_var.get()
             },
             "open_browser_on_load": self.open_browser_on_load_var.get(),
+            "custom_args": self.custom_args_entry.get().strip() if hasattr(self, "custom_args_entry") else self.config.get("custom_args", ""),
             "params": params
         }
 
@@ -371,6 +384,110 @@ class LlamaServerGUI:
         self.config = self.merge_config(self.collect_form_state())
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=4)
+
+    def tr(self, key, **kwargs):
+        return self.i18n.tr(key, **kwargs)
+
+    def _apply_run_state_to_controls(self):
+        """Приводит состояние кнопок/статуса в соответствие с is_running/server_ready
+        (используется после перестроения интерфейса)."""
+        if self.is_running:
+            self.start_btn.config(state=tk.DISABLED)
+            self.stop_btn.config(state=tk.NORMAL)
+            self.restart_btn.config(state=tk.NORMAL)
+            if self.server_ready:
+                self.status_label.config(text=self.tr("status_running"), fg="green")
+            else:
+                self.status_label.config(text=self.tr("status_loading"), fg="#ff9800")
+        else:
+            self.start_btn.config(state=tk.NORMAL)
+            self.stop_btn.config(state=tk.DISABLED)
+            self.restart_btn.config(state=tk.DISABLED)
+            self.status_label.config(text=self.tr("status_stopped"), fg="red")
+        if self.install_in_progress:
+            self.install_llama_btn.config(state=tk.DISABLED, text=self.tr("btn_download_llama_installing"))
+        else:
+            self.install_llama_btn.config(state=tk.NORMAL, text=self.tr("btn_download_llama"))
+
+    def toggle_language(self):
+        """Переключает язык интерфейса RU <-> EN с перестроением окна."""
+        if self.is_running:
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_reset_while_running"))
+            return
+        self.i18n.toggle()
+        self.config["language"] = self.i18n.language
+        self.rebuild_ui()
+        self.save_config()
+
+    def _capture_form_state(self):
+        """Снимок значений формы (пути, размеры, параметры) для восстановления
+        после перестроения интерфейса."""
+        snapshot = {}
+        if hasattr(self, "exe_entry"):
+            snapshot["exe_path"] = self.exe_entry.get()
+        if hasattr(self, "model_entry"):
+            snapshot["model_path"] = self.model_entry.get()
+        if hasattr(self, "window_width_entry"):
+            snapshot["width"] = self.window_width_entry.get()
+        if hasattr(self, "window_height_entry"):
+            snapshot["height"] = self.window_height_entry.get()
+        if hasattr(self, "custom_args_entry"):
+            snapshot["custom_args"] = self.custom_args_entry.get()
+        for param, widget in self.param_entries.items():
+            if isinstance(widget, tk.BooleanVar):
+                snapshot[param] = widget.get()
+            else:
+                snapshot[param] = widget.get()
+        return snapshot
+
+    def _restore_form_snapshot(self, snapshot):
+        if not snapshot:
+            return
+        if "exe_path" in snapshot and hasattr(self, "exe_entry"):
+            self.exe_entry.delete(0, tk.END)
+            self.exe_entry.insert(0, snapshot["exe_path"])
+        if "model_path" in snapshot and hasattr(self, "model_entry"):
+            self.model_entry.delete(0, tk.END)
+            self.model_entry.insert(0, snapshot["model_path"])
+        if "width" in snapshot and hasattr(self, "window_width_entry"):
+            self.window_width_entry.delete(0, tk.END)
+            self.window_width_entry.insert(0, snapshot["width"])
+        if "height" in snapshot and hasattr(self, "window_height_entry"):
+            self.window_height_entry.delete(0, tk.END)
+            self.window_height_entry.insert(0, snapshot["height"])
+        if "custom_args" in snapshot and hasattr(self, "custom_args_entry"):
+            self.custom_args_entry.delete(0, tk.END)
+            self.custom_args_entry.insert(0, snapshot["custom_args"])
+        for param, widget in self.param_entries.items():
+            if param not in snapshot:
+                continue
+            value = snapshot[param]
+            if isinstance(widget, tk.BooleanVar):
+                widget.set(bool(value))
+            else:
+                widget.delete(0, tk.END)
+                widget.insert(0, str(value))
+
+    def rebuild_ui(self):
+        """Уничтожает и заново создаёт меню и виджеты на текущем языке,
+        сохраняя значения полей и состояние выполнения."""
+        snapshot = self._capture_form_state()
+        try:
+            self.root.unbind_all("<MouseWheel>")
+        except tk.TclError:
+            pass
+        self.param_entries = {}
+        self.param_group_frames = {}
+        self.param_group_meta = {}
+
+        for child in self.root.winfo_children():
+            child.destroy()
+
+        # контекстное меню лога создается внутри create_widgets
+        self.create_menu()
+        self.create_widgets()
+        self._restore_form_snapshot(snapshot)
+        self.root.after(150, self._init_paned_sash)
 
     def apply_window_geometry(self):
         window_cfg = self.config.get("window", {})
@@ -392,6 +509,10 @@ class LlamaServerGUI:
         self.window_height_entry.delete(0, tk.END)
         self.window_height_entry.insert(0, window_cfg.get("height", "900"))
 
+        if hasattr(self, "custom_args_entry"):
+            self.custom_args_entry.delete(0, tk.END)
+            self.custom_args_entry.insert(0, self.config.get("custom_args", ""))
+
         params = self.config.get("params", {})
         for param, widget in self.param_entries.items():
             value = params.get(param, self.default_params[param])
@@ -402,59 +523,65 @@ class LlamaServerGUI:
                 widget.insert(0, str(value))
 
     def create_widgets(self):
-        path_frame = tk.LabelFrame(self.root, text=" Настройки путей ", padx=8, pady=4)
+        path_frame = tk.LabelFrame(self.root, text=" " + self.tr("frame_paths") + " ", padx=8, pady=4)
         path_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
+        self.path_frame = path_frame
 
-        tk.Label(path_frame, text="Сервер:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        tk.Label(path_frame, text=self.tr("label_server")).grid(row=0, column=0, sticky=tk.W, pady=2)
         self.exe_entry = tk.Entry(path_frame)
         self.exe_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
-        tk.Button(path_frame, text="Обзор...", command=self.browse_exe).grid(row=0, column=2, padx=2, pady=2)
-        self.install_llama_btn = tk.Button(path_frame, text="Скачать llama.cpp", command=self.install_llama_cpp)
+        tk.Button(path_frame, text=self.tr("btn_browse"), command=self.browse_exe).grid(row=0, column=2, padx=2, pady=2)
+        self.install_llama_btn = tk.Button(path_frame, text=self.tr("btn_download_llama"), command=self.install_llama_cpp)
         self.install_llama_btn.grid(row=0, column=3, padx=2, pady=2)
         self.list_devices_btn = tk.Button(
-            path_frame, text="Устройства", command=self.list_devices,
+            path_frame, text=self.tr("btn_devices"), command=self.list_devices,
         )
         self.list_devices_btn.grid(row=0, column=4, padx=2, pady=2)
 
-        tk.Label(path_frame, text="Модель:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        tk.Label(path_frame, text=self.tr("label_model")).grid(row=1, column=0, sticky=tk.W, pady=2)
         self.model_entry = tk.Entry(path_frame)
         self.model_entry.grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
-        tk.Button(path_frame, text="Обзор...", command=self.browse_model).grid(row=1, column=2, padx=2, pady=2)
+        tk.Button(path_frame, text=self.tr("btn_browse"), command=self.browse_model).grid(row=1, column=2, padx=2, pady=2)
 
         size_frame = tk.Frame(path_frame)
         size_frame.grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(2, 0))
-        tk.Label(size_frame, text="Окно (Ш×В):").pack(side=tk.LEFT)
+        tk.Label(size_frame, text=self.tr("label_window_size")).pack(side=tk.LEFT)
         self.window_width_entry = tk.Entry(size_frame, width=6)
         self.window_width_entry.pack(side=tk.LEFT, padx=(6, 2))
         tk.Label(size_frame, text="×").pack(side=tk.LEFT)
         self.window_height_entry = tk.Entry(size_frame, width=6)
         self.window_height_entry.pack(side=tk.LEFT, padx=(2, 0))
+
+        tk.Label(path_frame, text=self.tr("label_commands")).grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.custom_args_entry = tk.Entry(path_frame, font=("Consolas", 9))
+        self.custom_args_entry.grid(row=3, column=1, columnspan=4, sticky=tk.EW, padx=5, pady=2)
         path_frame.columnconfigure(1, weight=1)
 
         toolbar = tk.Frame(self.root)
         toolbar.pack(fill=tk.X, padx=10, pady=4)
+        self.toolbar = toolbar
 
-        tk.Button(toolbar, text="Сохранить", command=self.save_current_settings).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(toolbar, text="Импорт", command=self.import_settings).pack(side=tk.LEFT, padx=4)
-        tk.Button(toolbar, text="Экспорт", command=self.export_settings).pack(side=tk.LEFT, padx=4)
-        tk.Button(toolbar, text="Сброс", command=self.reset_settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text=self.tr("btn_save"), command=self.save_current_settings).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Button(toolbar, text=self.tr("btn_import"), command=self.import_settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text=self.tr("btn_export"), command=self.export_settings).pack(side=tk.LEFT, padx=4)
+        tk.Button(toolbar, text=self.tr("btn_reset"), command=self.reset_settings).pack(side=tk.LEFT, padx=4)
 
         tk.Frame(toolbar, width=24).pack(side=tk.LEFT)
 
         self.start_btn = tk.Button(
-            toolbar, text="Запустить", bg="#4CAF50", fg="white",
+            toolbar, text=self.tr("btn_start"), bg="#4CAF50", fg="white",
             font=("Arial", 10, "bold"), command=self.start_server,
         )
         self.start_btn.pack(side=tk.LEFT, padx=4)
 
         self.stop_btn = tk.Button(
-            toolbar, text="Остановить", bg="#f44336", fg="white",
+            toolbar, text=self.tr("btn_stop"), bg="#f44336", fg="white",
             font=("Arial", 10, "bold"), command=self.stop_server, state=tk.DISABLED,
         )
         self.stop_btn.pack(side=tk.LEFT, padx=4)
 
         self.restart_btn = tk.Button(
-            toolbar, text="Перезапустить", bg="#ff9800", fg="white",
+            toolbar, text=self.tr("btn_restart"), bg="#ff9800", fg="white",
             font=("Arial", 10, "bold"), command=self.restart_server, state=tk.DISABLED,
         )
         self.restart_btn.pack(side=tk.LEFT, padx=4)
@@ -462,12 +589,18 @@ class LlamaServerGUI:
         tk.Frame(toolbar, width=12).pack(side=tk.LEFT)
 
         self.open_browser_on_load_chk = tk.Checkbutton(
-            toolbar, text="Открыть браузер при загрузке", variable=self.open_browser_on_load_var,
+            toolbar, text=self.tr("chk_open_browser"), variable=self.open_browser_on_load_var,
             font=("Arial", 9), command=self.on_browser_checkbox_changed,
         )
         self.open_browser_on_load_chk.pack(side=tk.LEFT, padx=4)
 
-        self.status_label = tk.Label(toolbar, text="Статус: Остановлен", fg="red", font=("Arial", 10, "bold"))
+        self.lang_btn = tk.Button(
+            toolbar, text=self.tr("btn_lang_" + self.i18n.language),
+            font=("Arial", 9, "bold"), width=4, command=self.toggle_language,
+        )
+        self.lang_btn.pack(side=tk.LEFT, padx=4)
+
+        self.status_label = tk.Label(toolbar, text=self.tr("status_stopped"), fg="red", font=("Arial", 10, "bold"))
         self.status_label.pack(side=tk.RIGHT, padx=4)
 
         self.main_paned = tk.PanedWindow(
@@ -475,7 +608,7 @@ class LlamaServerGUI:
         )
         self.main_paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 8))
 
-        params_outer = tk.LabelFrame(self.main_paned, text=" Параметры запуска ", padx=6, pady=4)
+        params_outer = tk.LabelFrame(self.main_paned, text=" " + self.tr("frame_params") + " ", padx=6, pady=4)
         self.main_paned.add(params_outer, minsize=320, stretch="always")
 
         params_body = tk.Frame(params_outer)
@@ -485,7 +618,7 @@ class LlamaServerGUI:
         sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 6))
         sidebar.pack_propagate(False)
 
-        tk.Label(sidebar, text="Категории", font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
+        tk.Label(sidebar, text=self.tr("label_categories"), font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 4))
 
         list_frame = tk.Frame(sidebar)
         list_frame.pack(fill=tk.BOTH, expand=True)
@@ -505,7 +638,7 @@ class LlamaServerGUI:
 
         for index, group in enumerate(PARAM_GROUPS):
             prefix = "   " if group.get("backend") else ""
-            self.params_listbox.insert(tk.END, f"{prefix}{group['title']}")
+            self.params_listbox.insert(tk.END, f"{prefix}{self.i18n.group_title(group['id'])}")
             self.param_group_meta[index] = group["id"]
 
         self.params_listbox.bind("<<ListboxSelect>>", self._on_param_group_selected)
@@ -562,15 +695,15 @@ class LlamaServerGUI:
         log_header_frame = tk.Frame(log_container)
         log_header_frame.pack(anchor=tk.W, fill=tk.X, pady=(0, 4))
 
-        tk.Label(log_header_frame, text="Логи сервера", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        tk.Label(log_header_frame, text=self.tr("label_server_logs"), font=("Arial", 10, "bold")).pack(side=tk.LEFT)
 
-        copy_btn = tk.Button(log_header_frame, text="Копировать", font=("Arial", 8), command=self.copy_logs_to_clipboard)
+        copy_btn = tk.Button(log_header_frame, text=self.tr("btn_copy"), font=("Arial", 8), command=self.copy_logs_to_clipboard)
         copy_btn.pack(side=tk.RIGHT, padx=4)
 
-        clear_btn = tk.Button(log_header_frame, text="Очистить", font=("Arial", 8), command=self.clear_logs)
+        clear_btn = tk.Button(log_header_frame, text=self.tr("btn_clear"), font=("Arial", 8), command=self.clear_logs)
         clear_btn.pack(side=tk.RIGHT, padx=4)
 
-        save_log_btn = tk.Button(log_header_frame, text="Сохранить", font=("Arial", 8), command=self.save_logs)
+        save_log_btn = tk.Button(log_header_frame, text=self.tr("btn_save_log"), font=("Arial", 8), command=self.save_logs)
         save_log_btn.pack(side=tk.RIGHT, padx=4)
 
         self.log_area = scrolledtext.ScrolledText(
@@ -582,20 +715,26 @@ class LlamaServerGUI:
         )
         self.log_area.pack(expand=True, fill=tk.BOTH)
 
+        self.log_area.insert("1.0", "".join(self.log_lines))
+        self.log_area.see(tk.END)
+
         self.log_context_menu = tk.Menu(self.root, tearoff=0)
-        self.log_context_menu.add_command(label="Копировать", command=self.copy_logs_to_clipboard)
+        self.log_context_menu.add_command(label=self.tr("btn_copy"), command=self.copy_logs_to_clipboard)
         self.log_area.bind("<Button-3>", self.show_log_context_menu)
         self.log_area.bind("<Double-Button-1>", self.show_log_context_menu)
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.show_param_group("main")
+
+        self._apply_run_state_to_controls()
+
+        self.show_param_group(self.active_param_group_id)
 
     def _build_param_group_grid(self, parent, group):
         row, col = 0, 0
         for spec in group["params"]:
             param = spec["key"]
             value = self.default_params[param]
-            hint = spec.get("hint", "")
+            hint = self.i18n.param_hint(param, spec.get("hint", ""))
 
             cell = tk.Frame(parent, padx=6, pady=4)
             cell.grid(row=row, column=col, sticky=tk.NW)
@@ -604,7 +743,7 @@ class LlamaServerGUI:
 
             if isinstance(value, bool):
                 var = tk.BooleanVar(value=value)
-                chk = tk.Checkbutton(cell, text="Включить", variable=var, font=("Arial", 9))
+                chk = tk.Checkbutton(cell, text=self.tr("chk_enable"), variable=var, font=("Arial", 9))
                 chk.pack(anchor=tk.W, pady=(2, 0))
                 self.param_entries[param] = var
             else:
@@ -648,8 +787,8 @@ class LlamaServerGUI:
 
         group = next((item for item in PARAM_GROUPS if item["id"] == group_id), None)
         if group:
-            self.group_title_label.config(text=group["title"])
-            self.group_hint_label.config(text=group.get("hint", ""))
+            self.group_title_label.config(text=self.i18n.group_title(group["id"]))
+            self.group_hint_label.config(text=self.i18n.group_hint(group["id"]) or group.get("hint", ""))
 
         if not from_listbox:
             for index, gid in self.param_group_meta.items():
@@ -661,11 +800,11 @@ class LlamaServerGUI:
 
     def browse_exe(self):
         if sys.platform == "win32":
-            title = "Выберите llama-server.exe"
-            filetypes = [("Исполняемые файлы", "*.exe"), ("Все файлы", "*.*")]
+            title = self.tr("title_select_exe_win")
+            filetypes = [(self.tr("ft_executables_win"), "*.exe"), (self.tr("ft_all_files"), "*.*")]
         else:
-            title = "Выберите llama-server"
-            filetypes = [("Исполняемые файлы", "*"), ("Все файлы", "*.*")]
+            title = self.tr("title_select_exe_unix")
+            filetypes = [(self.tr("ft_executables_unix"), "*"), (self.tr("ft_all_files"), "*.*")]
         file_path = filedialog.askopenfilename(title=title, filetypes=filetypes)
         if file_path:
             self.exe_entry.delete(0, tk.END)
@@ -673,30 +812,26 @@ class LlamaServerGUI:
 
     def install_llama_cpp(self):
         if self.install_in_progress:
-            messagebox.showinfo("Установка", "Установка llama.cpp уже выполняется.")
+            messagebox.showinfo(self.tr("menu_install_llama"), self.tr("msg_install_already_running"))
             return
         if self.is_running:
-            messagebox.showwarning("Внимание", "Нельзя устанавливать llama.cpp во время работы сервера.")
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_install_while_running"))
             return
-        preferred_tag = self.config.get("install", {}).get("release_tag") or ""
-        if preferred_tag and not re.match(r"^b\d+$", preferred_tag):
-            preferred_tag = ""
 
         self.install_in_progress = True
-        self.install_llama_btn.config(state=tk.DISABLED, text="Список...")
-        self.log("--- Загрузка списка сборок llama.cpp с GitHub ---\n")
+        self.install_llama_btn.config(state=tk.DISABLED, text=self.tr("btn_download_llama_progress"))
+        self.log(self.tr("log_fetch_assets"))
         threading.Thread(
             target=self._fetch_assets_and_prompt,
-            args=(preferred_tag,),
             daemon=True,
         ).start()
 
-    def _fetch_assets_and_prompt(self, preferred_tag):
+    def _fetch_assets_and_prompt(self):
         try:
             if sys.platform == "win32":
-                tag, assets, warning = fetch_windows_assets(tag=preferred_tag or None, timeout=45)
+                tag, assets, warning = fetch_windows_assets(timeout=45, language=self.i18n.language)
             else:
-                tag, assets, warning = fetch_linux_assets(tag=preferred_tag or None, timeout=45)
+                tag, assets, warning = fetch_linux_assets(timeout=45, language=self.i18n.language)
             self.root.after(0, lambda: self._on_assets_loaded(tag, assets, warning))
         except Exception as exc:
             error_message = str(exc) or exc.__class__.__name__
@@ -705,11 +840,11 @@ class LlamaServerGUI:
 
     def _on_assets_loaded(self, tag, assets, warning):
         self.install_in_progress = False
-        self.install_llama_btn.config(state=tk.NORMAL, text="Скачать llama.cpp")
+        self.install_llama_btn.config(state=tk.NORMAL, text=self.tr("btn_download_llama"))
         self.current_release_tag = tag
         if warning:
             self.log(f"{warning}\n")
-        self.log(f"Релиз: {tag}, сборок: {len(assets)}\n")
+        self.log(f"{self.tr('msg_release_info')}: {tag}, {self.tr('msg_builds_count')}: {len(assets)}\n")
 
         selected_asset = self._prompt_llama_asset(assets, tag)
         if not selected_asset:
@@ -717,7 +852,7 @@ class LlamaServerGUI:
 
         default_dir = self.config.get("install", {}).get("directory") or os.path.join(os.getcwd(), "llama.cpp")
         install_dir = filedialog.askdirectory(
-            title="Выберите папку для установки llama.cpp",
+            title=self.tr("title_select_install_dir"),
             initialdir=default_dir if os.path.isdir(default_dir) else os.getcwd(),
             mustexist=False,
         )
@@ -726,22 +861,22 @@ class LlamaServerGUI:
 
         install_dir = os.path.normpath(install_dir)
         if os.path.isfile(install_dir):
-            messagebox.showerror("Ошибка", "Указан путь к файлу. Выберите папку для установки.")
+            messagebox.showerror(self.tr("msg_error"), self.tr("msg_install_path_is_file"))
             return
 
         if os.path.isdir(install_dir) and os.listdir(install_dir):
             overwrite = messagebox.askyesno(
-                "Подтверждение",
-                "Папка установки не пуста. Существующие файлы могут быть перезаписаны. Продолжить?",
+                self.tr("msg_confirm"),
+                self.tr("msg_install_dir_not_empty"),
             )
             if not overwrite:
                 return
 
         self.install_in_progress = True
-        self.install_llama_btn.config(state=tk.DISABLED, text="Установка...")
+        self.install_llama_btn.config(state=tk.DISABLED, text=self.tr("btn_download_llama_installing"))
         self.log(
-            f"--- Установка llama.cpp ---\nИсточник: {LLAMA_CPP_RELEASES_URL}\n"
-            f"Релиз: {tag}\nВариант: {selected_asset['label']}\nПапка: {install_dir}\n\n"
+            f"--- {self.tr('log_install_header')} ---\n{self.tr('log_source')} {LLAMA_CPP_RELEASES_URL}\n"
+            f"{self.tr('log_release')} {tag}\n{self.tr('log_variant')} {selected_asset['label']}\n{self.tr('log_folder')} {install_dir}\n\n"
         )
         threading.Thread(
             target=self._install_llama_cpp_worker,
@@ -751,8 +886,9 @@ class LlamaServerGUI:
 
     def _prompt_llama_asset(self, assets, release_tag):
         selected_value = {"asset": None}
+        platform_label = "Windows" if sys.platform == "win32" else "Linux"
         dialog = tk.Toplevel(self.root)
-        dialog.title(f"Выбор сборки llama.cpp ({release_tag})")
+        dialog.title(f"{self.tr('title_select_build')} ({release_tag})")
         dialog.geometry("560x460")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -760,7 +896,7 @@ class LlamaServerGUI:
 
         tk.Label(
             dialog,
-            text=f"Выберите {'Windows' if sys.platform == 'win32' else 'Linux'}-сборку llama.cpp — релиз {release_tag}",
+            text=self.tr("msg_select_build", platform=platform_label, tag=release_tag),
             font=("Arial", 10, "bold"),
             anchor=tk.W,
             justify=tk.LEFT,
@@ -768,7 +904,7 @@ class LlamaServerGUI:
 
         tk.Label(
             dialog,
-            text="Список загружен с GitHub Releases. Vulkan x64 отмечен как рекомендуемый, если доступен.",
+            text=self.tr("msg_select_build_hint"),
             fg="#555555",
             anchor=tk.W,
             justify=tk.LEFT,
@@ -789,11 +925,12 @@ class LlamaServerGUI:
             (index for index, asset in enumerate(assets) if asset.get("recommended")),
             0,
         )
+        recommended_suffix_default = self.tr("msg_recommended_suffix")
         for index, asset in enumerate(assets):
             if not asset.get("label"):
                 continue
             suffix = " + CUDA DLLs" if asset.get("dll_asset") else ""
-            recommended_suffix = " — Рекомендуется" if asset.get("recommended") else ""
+            recommended_suffix = recommended_suffix_default if asset.get("recommended") else ""
             size = asset.get("size") or 0
             size_suffix = f" ({size / (1024 ** 2):.0f} MB)" if size else ""
             listbox.insert(tk.END, f"{asset['label']}{suffix}{recommended_suffix}{size_suffix}")
@@ -809,7 +946,7 @@ class LlamaServerGUI:
         def confirm_selection(_event=None):
             selection = listbox.curselection()
             if not selection:
-                messagebox.showwarning("Выбор обязателен", "Выберите один вариант сборки.", parent=dialog)
+                messagebox.showwarning(self.tr("msg_choice_required"), self.tr("msg_select_one_build"), parent=dialog)
                 return
             selected_value["asset"] = assets[selection[0]]
             dialog.destroy()
@@ -818,8 +955,8 @@ class LlamaServerGUI:
             dialog.destroy()
 
         listbox.bind("<Double-Button-1>", confirm_selection)
-        tk.Button(buttons, text="Установить", command=confirm_selection).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(buttons, text="Отмена", command=cancel_selection).pack(side=tk.RIGHT)
+        tk.Button(buttons, text=self.tr("btn_install_confirm"), command=confirm_selection).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(buttons, text=self.tr("btn_cancel"), command=cancel_selection).pack(side=tk.RIGHT)
 
         self.root.wait_window(dialog)
         return selected_value["asset"]
@@ -846,7 +983,7 @@ class LlamaServerGUI:
 
             exe_path = self._find_llama_server(install_dir)
             if not exe_path:
-                raise FileNotFoundError(f"Не найден {LLAMA_SERVER_FILENAME} после распаковки архива.")
+                raise FileNotFoundError(self.tr("err_server_not_found", exe=LLAMA_SERVER_FILENAME))
             if sys.platform != "win32":
                 os.chmod(exe_path, os.stat(exe_path).st_mode | 0o111)
             if dll_asset:
@@ -868,7 +1005,7 @@ class LlamaServerGUI:
         self.root.after(
             0,
             lambda: self.log(
-                f"Скачивание: {display_name}\nИсточник: {LLAMA_CPP_RELEASES_URL}\nРелиз: {tag}\nURL: {url}\n"
+                f"{self.tr('log_downloading')} {display_name}\n{self.tr('log_source')} {LLAMA_CPP_RELEASES_URL}\n{self.tr('log_release')} {tag}\nURL: {url}\n"
             ),
         )
         request = urllib.request.Request(url, headers={"User-Agent": "LLM-Server-Controller/0.1"})
@@ -887,21 +1024,21 @@ class LlamaServerGUI:
                     percent = int(downloaded * 100 / total_size)
                     self.root.after(0, lambda p=percent, name=display_name: self.install_llama_btn.config(text=f"{p}% {name[:18]}"))
 
-        self.root.after(0, lambda: self.log(f"Скачивание завершено: {display_name}\n"))
+        self.root.after(0, lambda: self.log(f"{self.tr('log_download_complete')} {display_name}\n"))
 
     def _extract_zip(self, archive_path, install_dir):
-        self.root.after(0, lambda: self.log(f"Распаковка: {os.path.basename(archive_path)} -> {install_dir}\n"))
+        self.root.after(0, lambda: self.log(f"{self.tr('log_extracting')} {os.path.basename(archive_path)} -> {install_dir}\n"))
         with zipfile.ZipFile(archive_path, "r") as archive:
             archive.extractall(install_dir)
 
     def _extract_tar_gz(self, archive_path, install_dir):
-        self.root.after(0, lambda: self.log(f"Распаковка: {os.path.basename(archive_path)} -> {install_dir}\n"))
+        self.root.after(0, lambda: self.log(f"{self.tr('log_extracting')} {os.path.basename(archive_path)} -> {install_dir}\n"))
         install_dir = os.path.abspath(install_dir)
         with tarfile.open(archive_path, "r:gz") as archive:
             for member in archive.getmembers():
                 member_path = os.path.abspath(os.path.join(install_dir, member.name))
                 if not (member_path == install_dir or member_path.startswith(install_dir + os.sep)):
-                    raise RuntimeError(f"Небезопасный путь в архиве: {member.name}")
+                    raise RuntimeError(self.tr("err_unsafe_archive_path", name=member.name))
             archive.extractall(install_dir)
 
     def _find_llama_server(self, install_dir):
@@ -923,7 +1060,7 @@ class LlamaServerGUI:
                         shutil.copy2(source_path, destination_path)
                         copied += 1
         if copied:
-            self.root.after(0, lambda: self.log(f"DLL-файлы скопированы рядом с llama-server.exe: {copied}\n"))
+            self.root.after(0, lambda: self.log(self.tr("log_dll_copied", count=copied)))
 
     def _finish_llama_install(self, selected_asset, install_dir, exe_path, release_tag):
         self.exe_entry.delete(0, tk.END)
@@ -934,19 +1071,19 @@ class LlamaServerGUI:
             "release_tag": release_tag,
         }
         self.save_config()
-        self.log(f"Установка завершена. Найден исполняемый файл: {exe_path}\n\n")
+        self.log(self.tr("log_exe_found", path=exe_path))
         messagebox.showinfo(
-            "Установка завершена",
-            f"llama.cpp установлен в:\n{install_dir}\n\nСборка: {selected_asset['label']}\n{LLAMA_SERVER_FILENAME}:\n{exe_path}",
+            self.tr("msg_install_complete"),
+            self.tr("msg_install_complete_body", dir=install_dir, label=selected_asset['label'], exe_name=LLAMA_SERVER_FILENAME, exe_path=exe_path),
         )
 
     def _handle_llama_install_error(self, error_message):
-        self.log(f"Ошибка установки llama.cpp: {error_message}\n\n")
-        messagebox.showerror("Ошибка установки llama.cpp", error_message)
+        self.log(self.tr("msg_install_error_log", error=error_message))
+        messagebox.showerror(self.tr("msg_install_error"), error_message)
 
     def _reset_install_controls(self):
         self.install_in_progress = False
-        self.install_llama_btn.config(state=tk.NORMAL, text="Скачать llama.cpp")
+        self.install_llama_btn.config(state=tk.NORMAL, text=self.tr("btn_download_llama"))
 
     def _get_hidden_startupinfo(self):
         if sys.platform == "win32":
@@ -959,10 +1096,10 @@ class LlamaServerGUI:
     def list_devices(self):
         exe_path = os.path.normpath(self.exe_entry.get().strip())
         if not exe_path or not os.path.exists(exe_path):
-            messagebox.showerror("Ошибка", f"Укажите корректный путь к {LLAMA_SERVER_FILENAME}")
+            messagebox.showerror(self.tr("msg_error"), self.tr("err_invalid_exe", exe=LLAMA_SERVER_FILENAME))
             return
 
-        self.list_devices_btn.config(state=tk.DISABLED, text="Загрузка...")
+        self.list_devices_btn.config(state=tk.DISABLED, text=self.tr("btn_devices_loading"))
         threading.Thread(target=self._run_list_devices, args=(exe_path,), daemon=True).start()
 
     def _run_list_devices(self, exe_path):
@@ -983,28 +1120,28 @@ class LlamaServerGUI:
                     output += "\n"
                 output += result.stderr
             if not output.strip():
-                output = f"Команда завершилась с кодом {result.returncode}.\nВывод пуст."
+                output = self.tr("msg_empty_output", code=result.returncode)
 
-            title = "Устройства системы (--list-devices)"
+            title = self.tr("title_devices_ok")
             if result.returncode != 0:
-                title = f"Устройства (--list-devices, код {result.returncode})"
+                title = self.tr("title_devices_error", code=result.returncode)
 
             self.root.after(0, lambda: self._show_devices_result(title, output, cmd))
         except subprocess.TimeoutExpired:
             self.root.after(
                 0,
-                lambda: messagebox.showerror("Ошибка", "Превышено время ожидания команды --list-devices"),
+                lambda: messagebox.showerror(self.tr("msg_error"), self.tr("err_list_devices_timeout")),
             )
         except OSError as exc:
-            self.root.after(0, lambda: messagebox.showerror("Ошибка", str(exc)))
+            self.root.after(0, lambda: messagebox.showerror(self.tr("msg_error"), str(exc)))
         finally:
             self.root.after(0, self._list_devices_finished)
 
     def _list_devices_finished(self):
-        self.list_devices_btn.config(state=tk.NORMAL, text="Устройства")
+        self.list_devices_btn.config(state=tk.NORMAL, text=self.tr("btn_devices"))
 
     def _show_devices_result(self, title, output, cmd):
-        self.log(f"--- {title} ---\nКоманда: {' '.join(cmd)}\n\n{output}\n")
+        self.log(f"--- {title} ---\n{self.tr('log_command')} {' '.join(cmd)}\n\n{output}\n")
 
         window = tk.Toplevel(self.root)
         window.title(title)
@@ -1032,13 +1169,13 @@ class LlamaServerGUI:
             self.root.clipboard_append(output)
             self.root.update()
 
-        tk.Button(btn_frame, text="Копировать", command=copy_output).pack(side=tk.LEFT, padx=4)
-        tk.Button(btn_frame, text="Закрыть", command=window.destroy).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_frame, text=self.tr("btn_copy"), command=copy_output).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_frame, text=self.tr("btn_close"), command=window.destroy).pack(side=tk.LEFT, padx=4)
 
     def browse_model(self):
         file_path = filedialog.askopenfilename(
-            title="Выберите файл модели GGUF",
-            filetypes=[("Модели GGUF", "*.gguf"), ("Все файлы", "*.*")]
+            title=self.tr("title_select_model"),
+            filetypes=[(self.tr("ft_gguf"), "*.gguf"), (self.tr("ft_all_files"), "*.*")]
         )
         if file_path:
             self.model_entry.delete(0, tk.END)
@@ -1048,9 +1185,9 @@ class LlamaServerGUI:
         try:
             self.save_config()
             self.apply_window_size_from_fields()
-            messagebox.showinfo("Успех", f"Настройки сохранены в {CONFIG_FILE}")
+            messagebox.showinfo(self.tr("msg_success"), self.tr("msg_settings_saved", file=CONFIG_FILE))
         except OSError as exc:
-            messagebox.showerror("Ошибка сохранения", str(exc))
+            messagebox.showerror(self.tr("msg_save_error"), str(exc))
 
     def on_sound_settings_changed(self):
         self.save_config()
@@ -1084,33 +1221,34 @@ class LlamaServerGUI:
 
         self.loading_blink_visible = not self.loading_blink_visible
         color = "#ff9800" if self.loading_blink_visible else "#ffd180"
-        self.status_label.config(text="Статус: Загружается", fg=color)
+        self.status_label.config(text=self.tr("status_loading"), fg=color)
         self.loading_blink_job = self.root.after(500, self.animate_loading_status)
 
     def set_loading_error_state(self):
         self.stop_loading_blink()
-        self.status_label.config(text="Статус: Ошибка загрузки", fg="#b00020")
+        self.status_label.config(text=self.tr("status_load_error"), fg="#b00020")
 
     def import_settings(self):
         file_path = filedialog.askopenfilename(
-            title="Импорт настроек",
-            filetypes=[("JSON файлы", "*.json"), ("Все файлы", "*.*")]
+            title=self.tr("title_import"),
+            filetypes=[(self.tr("ft_json"), "*.json"), (self.tr("ft_all_files"), "*.*")]
         )
         if not file_path:
             return
 
         imported_config = self.load_config(file_path)
         self.config = imported_config
+        self.i18n.set_language(self.config.get("language", self.i18n.language))
         self.apply_window_geometry()
         self.apply_config_to_form()
         self.save_config()
-        messagebox.showinfo("Импорт завершен", "Настройки импортированы и сохранены в локальный конфиг.")
+        messagebox.showinfo(self.tr("title_import"), self.tr("msg_import_done"))
 
     def export_settings(self):
         file_path = filedialog.asksaveasfilename(
-            title="Экспорт настроек",
+            title=self.tr("title_export"),
             defaultextension=".json",
-            filetypes=[("JSON файлы", "*.json"), ("Все файлы", "*.*")]
+            filetypes=[(self.tr("ft_json"), "*.json"), (self.tr("ft_all_files"), "*.*")]
         )
         if not file_path:
             return
@@ -1119,20 +1257,21 @@ class LlamaServerGUI:
             export_config = self.merge_config(self.collect_form_state())
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(export_config, f, ensure_ascii=False, indent=4)
-            messagebox.showinfo("Экспорт завершен", f"Настройки экспортированы в:\n{file_path}")
+            messagebox.showinfo(self.tr("title_export"), self.tr("msg_export_done", path=file_path))
         except OSError as exc:
-            messagebox.showerror("Ошибка экспорта", str(exc))
+            messagebox.showerror(self.tr("msg_export_error"), str(exc))
 
     def reset_settings(self):
         if self.is_running:
-            messagebox.showwarning("Внимание", "Нельзя сбрасывать настройки во время работы сервера.")
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_reset_while_running"))
             return
 
         self.config = self.get_default_config()
+        self.i18n.set_language(self.config.get("language", self.i18n.language))
         self.apply_window_geometry()
         self.apply_config_to_form()
         self.save_config()
-        messagebox.showinfo("Сброс выполнен", "Настройки возвращены к значениям по умолчанию.")
+        messagebox.showinfo(self.tr("msg_success"), self.tr("msg_reset_done"))
 
     def apply_window_size_from_fields(self):
         width = self.window_width_entry.get().strip()
@@ -1141,51 +1280,10 @@ class LlamaServerGUI:
             self.root.geometry(f"{width}x{height}")
 
     def show_help(self):
-        help_text = (
-            "LLM Server Controller — справка\n\n"
-            "Назначение программы:\n"
-            "Приложение позволяет выбрать llama-server, указать GGUF-модель, настроить параметры запуска,\n"
-            "запустить сервер, остановить его, перезапустить и просматривать логи.\n\n"
-            "Описание полей:\n"
-            "Сервер — путь к файлу llama-server.\n"
-            "Устройства — запускает llama-server --list-devices и показывает доступные GPU/CPU\n"
-            "устройства перед настройкой --device.\n"
-            "Модель — путь к файлу модели в формате .gguf.\n"
-            "Ширина окна — ширина окна приложения в пикселях.\n"
-            "Высота окна — высота окна приложения в пикселях.\n\n"
-            "Описание параметров запуска:\n"
-            "Слева — список категорий, справа — поля выбранной группы (4 колонки).\n"
-            "Переключение: клик в списке или меню «Параметры». Разделитель между параметрами\n"
-            "и логами можно перетаскивать для изменения высоты панелей.\n\n"
-            "Основные:\n"
-            "--ctx-size — размер контекста; --n-gpu-layers — слои на GPU; -fa — Flash Attention;\n"
-            "--threads — потоки CPU; --cache-type-k/v — формат KV Cache; --no-mmap, --mlock — память;\n"
-            "--host, --port — сетевые настройки сервера.\n\n"
-            "Другие группы: Контекст, GPU, Память, CPU, Batch, Генерация, Draft Model, MoE,\n"
-            "Embeddings, Сервер, Безопасность, Диагностика, а также Backend (CUDA, Vulkan, HIP, Metal, SYCL).\n"
-            "Поля backend-устройств (--device-cuda и т.д.) передаются как --device при запуске.\n\n"
-            "Кнопки и функции:\n"
-            "Сохранить настройки — сохраняет текущие пути, размеры окна и параметры в llama_config.json.\n"
-            "Импорт настроек — загружает настройки из внешнего JSON-файла.\n"
-            "Экспорт настроек — сохраняет текущие настройки в выбранный JSON-файл.\n"
-            "Сбросить параметры — возвращает параметры и размеры окна к значениям по умолчанию.\n"
-            "Запустить сервер — запускает llama-server с текущими параметрами.\n"
-            "Остановить — завершает работающий сервер.\n"
-            "Перезапустить — останавливает и снова запускает сервер с текущими настройками.\n"
-            "Сохранить лог — сохраняет видимые логи в файл .log или .txt.\n"
-            "Очистить лог — очищает окно логов.\n"
-            "Копировать лог — копирует выделенный фрагмент лога или весь лог, если выделения нет.\n\n"
-            "Меню Файл:\n"
-            "Импорт — загрузка настроек из JSON-файла.\n"
-            "Экспорт — сохранение текущих настроек в JSON-файл.\n"
-            "Выход — закрытие приложения с сохранением текущих настроек.\n\n"
-            "Замечания:\n"
-            "Некоторые параметры зависят от версии llama-server и вашей сборки.\n"
-            "Если сервер не запускается, проверьте путь к серверу, путь к модели и совместимость параметров."
-        )
+        help_text = self.i18n.help_text()
 
         help_window = tk.Toplevel(self.root)
-        help_window.title("Справка")
+        help_window.title(self.tr("title_help"))
         help_window.geometry("760x620")
         help_window.transient(self.root)
 
@@ -1194,12 +1292,12 @@ class LlamaServerGUI:
         text_area.insert("1.0", help_text)
         text_area.config(state=tk.DISABLED)
 
-        close_btn = tk.Button(help_window, text="Закрыть", command=help_window.destroy)
+        close_btn = tk.Button(help_window, text=self.tr("btn_close"), command=help_window.destroy)
         close_btn.pack(pady=(0, 10))
 
     def show_about(self):
         about_window = tk.Toplevel(self.root)
-        about_window.title("О программе")
+        about_window.title(self.tr("title_about"))
         about_window.transient(self.root)
         about_window.grab_set()
 
@@ -1275,6 +1373,28 @@ class LlamaServerGUI:
 
         return dynamic_args
 
+    def parse_custom_args(self, raw_args):
+        """Разбирает строку дополнительных аргументов в список токенов,
+        сохраняя аргументы со пробелами, взятые в двойные кавычки."""
+        if not raw_args:
+            return []
+
+        tokens = []
+        regex = re.compile(r'"((?:[^"\\]|\\.)*)"|(\S+)')
+        for match in regex.finditer(raw_args):
+            if match.group(1) is not None:
+                tokens.append(match.group(1))
+            else:
+                tokens.append(match.group(2))
+
+        return tokens
+
+    def get_custom_args(self):
+        if not hasattr(self, "custom_args_entry"):
+            return []
+        raw = self.custom_args_entry.get().strip()
+        return self.parse_custom_args(raw)
+
     def append_log(self, text):
         self.log_lines.append(text)
         self.log_area.insert(tk.END, text)
@@ -1303,20 +1423,20 @@ class LlamaServerGUI:
             self.root.clipboard_clear()
             self.root.clipboard_append(logs)
             self.root.update()
-            messagebox.showinfo("Успех", "Данные из логов скопированы в буфер обмена.")
+            messagebox.showinfo(self.tr("msg_success"), self.tr("msg_logs_copied"))
         else:
-            messagebox.showwarning("Внимание", "Нет данных для копирования.")
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_nothing_to_copy"))
 
     def save_logs(self):
         logs = self.log_area.get("1.0", tk.END).strip()
         if not logs:
-            messagebox.showwarning("Внимание", "Нет логов для сохранения.")
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_no_logs_to_save"))
             return
 
         file_path = filedialog.asksaveasfilename(
-            title="Сохранить логи",
+            title=self.tr("title_save_logs"),
             defaultextension=".log",
-            filetypes=[("Log файлы", "*.log"), ("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")]
+            filetypes=[(self.tr("ft_log"), "*.log"), (self.tr("ft_text"), "*.txt"), (self.tr("ft_all_files"), "*.*")]
         )
         if not file_path:
             return
@@ -1324,9 +1444,9 @@ class LlamaServerGUI:
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(logs + "\n")
-            messagebox.showinfo("Успех", f"Логи сохранены в:\n{file_path}")
+            messagebox.showinfo(self.tr("msg_success"), self.tr("msg_logs_saved", path=file_path))
         except OSError as exc:
-            messagebox.showerror("Ошибка сохранения", str(exc))
+            messagebox.showerror(self.tr("msg_save_error"), str(exc))
 
     def read_output(self):
         for line in iter(self.process.stdout.readline, ''):
@@ -1355,23 +1475,24 @@ class LlamaServerGUI:
         model_path = os.path.normpath(self.model_entry.get().strip())
 
         if not exe_path or not os.path.exists(exe_path):
-            messagebox.showerror("Ошибка", f"Укажите корректный путь к {LLAMA_SERVER_FILENAME}")
+            messagebox.showerror(self.tr("msg_error"), self.tr("err_invalid_exe", exe=LLAMA_SERVER_FILENAME))
             return
         if not model_path or not os.path.exists(model_path):
-            messagebox.showerror("Ошибка", "Укажите корректный путь к файлу модели (.gguf)")
+            messagebox.showerror(self.tr("msg_error"), self.tr("err_invalid_model"))
             return
 
         width = self.window_width_entry.get().strip()
         height = self.window_height_entry.get().strip()
         if (width and not width.isdigit()) or (height and not height.isdigit()):
-            messagebox.showerror("Ошибка", "Ширина и высота окна должны быть целыми числами.")
+            messagebox.showerror(self.tr("msg_error"), self.tr("err_invalid_window_size"))
             return
 
         self.save_config()
         self.apply_window_size_from_fields()
 
         custom_args = self.generate_args()
-        full_cmd = [exe_path, "-m", model_path] + custom_args
+        extra_args = self.get_custom_args()
+        full_cmd = [exe_path, "-m", model_path] + custom_args + extra_args
 
         try:
             startupinfo = self._get_hidden_startupinfo()
@@ -1393,13 +1514,13 @@ class LlamaServerGUI:
             self.start_btn.config(state=tk.DISABLED)
             self.stop_btn.config(state=tk.NORMAL)
             self.restart_btn.config(state=tk.NORMAL)
-            self.status_label.config(text="Статус: Загружается", fg="#ff9800")
+            self.status_label.config(text=self.tr("status_loading"), fg="#ff9800")
             self.start_loading_blink()
-            self.log(f"--- Запуск сервера ---\nКоманда: {' '.join(full_cmd)}\n\n")
+            self.log(f"--- {self.tr('log_start_server')} ---\n{self.tr('log_command')} {' '.join(full_cmd)}\n\n")
             threading.Thread(target=self.read_output, daemon=True).start()
 
         except Exception as e:
-            messagebox.showerror("Ошибка запуска", str(e))
+            messagebox.showerror(self.tr("err_start"), str(e))
 
     def stop_server(self, log_message=True):
         if self.process and self.is_running:
@@ -1408,14 +1529,14 @@ class LlamaServerGUI:
             self.process.terminate()
             self.set_stopped_state(play_sound=False)
             if log_message:
-                self.log("\n--- Сервер принудительно остановлен ---\n")
+                self.log(f"\n--- {self.tr('log_force_stopped')} ---\n")
 
     def restart_server(self):
         if not self.is_running:
             self.start_server()
             return
 
-        self.log("\n--- Перезапуск сервера ---\n")
+        self.log(f"\n--- {self.tr('log_restarting')} ---\n")
         self.stop_server(log_message=False)
         self.root.after(500, self.start_server)
 
@@ -1430,16 +1551,16 @@ class LlamaServerGUI:
 
     def open_server_in_browser(self):
         url = self.get_server_url()
-        self.log(f"Открытие браузера: {url}\n")
+        self.log(f"{self.tr('log_opening_browser')} {url}\n")
         try:
             webbrowser.open(url)
         except Exception as exc:
-            self.log(f"Не удалось открыть браузер автоматически: {exc}\n")
+            self.log(self.tr("log_browser_open_failed", error=exc))
 
     def set_ready_state(self):
         if self.is_running:
             self.stop_loading_blink()
-            self.status_label.config(text="Статус: Работает", fg="green")
+            self.status_label.config(text=self.tr("status_running"), fg="green")
             self.play_loaded_sound()
             if self.open_browser_on_load_var.get():
                 self.open_server_in_browser()
@@ -1451,7 +1572,7 @@ class LlamaServerGUI:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.restart_btn.config(state=tk.DISABLED)
-        self.status_label.config(text="Статус: Остановлен", fg="red")
+        self.status_label.config(text=self.tr("status_stopped"), fg="red")
         if play_sound:
             self.play_stopped_sound()
 
@@ -1459,11 +1580,11 @@ class LlamaServerGUI:
         try:
             self.save_config()
         except OSError as exc:
-            messagebox.showerror("Ошибка сохранения", str(exc))
+            messagebox.showerror(self.tr("msg_save_error"), str(exc))
 
     def on_close(self):
         if self.is_running:
-            if messagebox.askokcancel("Выход", "Сервер еще работает. Завершить процесс и выйти?"):
+            if messagebox.askokcancel(self.tr("msg_exit"), self.tr("msg_exit_confirm")):
                 self.stop_server()
                 self._save_config_safely()
                 self.root.destroy()
