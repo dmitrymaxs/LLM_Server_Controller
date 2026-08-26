@@ -17,7 +17,7 @@ if sys.platform == "win32":
 else:
     winsound = None
 
-from tkinter import scrolledtext, messagebox, filedialog
+from tkinter import scrolledtext, messagebox, filedialog, ttk
 
 from params_config import (
     PARAM_GROUPS,
@@ -464,6 +464,8 @@ class LlamaServerGUI:
             value = snapshot[param]
             if isinstance(widget, tk.BooleanVar):
                 widget.set(bool(value))
+            elif isinstance(widget, tk.StringVar):
+                widget.set(str(value))
             else:
                 widget.delete(0, tk.END)
                 widget.insert(0, str(value))
@@ -518,6 +520,8 @@ class LlamaServerGUI:
             value = params.get(param, self.default_params[param])
             if isinstance(widget, tk.BooleanVar):
                 widget.set(bool(value))
+            elif isinstance(widget, tk.StringVar):
+                widget.set(str(value))
             else:
                 widget.delete(0, tk.END)
                 widget.insert(0, str(value))
@@ -745,6 +749,21 @@ class LlamaServerGUI:
                 var = tk.BooleanVar(value=value)
                 chk = tk.Checkbutton(cell, text=self.tr("chk_enable"), variable=var, font=("Arial", 9))
                 chk.pack(anchor=tk.W, pady=(2, 0))
+                self.param_entries[param] = var
+            elif spec.get("choices"):
+                choices = list(spec["choices"])
+                if value not in choices:
+                    choices.insert(0, str(value))
+                var = tk.StringVar(value=str(value))
+                combo = ttk.Combobox(
+                    cell,
+                    textvariable=var,
+                    values=choices,
+                    state="readonly",
+                    width=14,
+                    font=("Consolas", 9),
+                )
+                combo.pack(anchor=tk.W, pady=(2, 0))
                 self.param_entries[param] = var
             else:
                 ent = tk.Entry(cell, width=16, font=("Consolas", 9))
