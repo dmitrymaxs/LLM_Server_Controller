@@ -68,7 +68,7 @@ GUI-приложение для запуска и управления лока�
 
 | Группа | Параметры |
 |-------|-----------|
-| **Основные** | `--ctx-size` (размер контекста), `--n-gpu-layers`, `--flash-attn`, `--threads`, `--cache-type-k/v`, `--host`, `--port` |
+| **Основные** | `--ctx-size` (размер контекста), `--n-gpu-layers`, `--flash-attn`, `--threads`, `--cache-type-k/v`, `--load-mode` (auto, none, mmap, mlock, mmap+mlock, dio), `--agent`, `--host`, `--port` |
 | **Контекст** | `--keep`, `--parallel`, `--slots` |
 | **GPU и вычисления** | `--split-mode`, `--main-gpu`, `--tensor-split`, `--device` (CUDA0, Vulkan0…) |
 | **Память** | `--defrag-thold`, `--no-kv-offload` |

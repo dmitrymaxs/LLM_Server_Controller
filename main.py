@@ -45,7 +45,7 @@ APP_ICON_PNG_CANDIDATES = [
     "16х16.png",
     "icon48х48.png",
 ]
-APP_VERSION = "0.1.6"
+APP_VERSION = "0.1.7"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
@@ -91,7 +91,7 @@ def get_user_config_path():
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Server Controller v.0.1.6")
+        self.root.title("LLM Server Controller v.0.1.7")
         self.root.geometry("1000x900")
         self.apply_app_icon()
 
@@ -1335,11 +1335,38 @@ class LlamaServerGUI:
         website_link.pack(anchor="w")
         website_link.bind("<Button-1>", lambda e: webbrowser.open("https://llm-server.github.io/"))
 
-        donate_btn = tk.Button(about_window, text="Donate", command=lambda: webbrowser.open("pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"))
+        donate_btn = tk.Button(
+            about_window,
+            text="Donate",
+            command=lambda: webbrowser.open("pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"),
+        )
         donate_btn.pack(pady=(10, 10))
 
-        close_btn = tk.Button(about_window, text="OK", command=about_window.destroy)
+        default_fg = donate_btn.cget("fg") or "black"
+        blink_visible = True
+        blink_job = {"id": None}
+
+        def _on_about_close():
+            if blink_job["id"] is not None:
+                try:
+                    about_window.after_cancel(blink_job["id"])
+                except tk.TclError:
+                    pass
+                blink_job["id"] = None
+            about_window.destroy()
+
+        def _toggle_donate_blink():
+            nonlocal blink_visible
+            blink_visible = not blink_visible
+            if donate_btn.winfo_exists():
+                donate_btn.config(fg="#ff0000" if blink_visible else default_fg)
+            blink_job["id"] = about_window.after(700, _toggle_donate_blink)
+
+        close_btn = tk.Button(about_window, text="OK", command=_on_about_close)
         close_btn.pack(pady=(0, 10))
+
+        about_window.protocol("WM_DELETE_WINDOW", _on_about_close)
+        blink_job["id"] = about_window.after(700, _toggle_donate_blink)
 
     def _on_params_mousewheel(self, event):
         if self.params_content_canvas is None:

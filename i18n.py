@@ -356,8 +356,8 @@ PARAM_HINTS = {
     "--threads":         {"ru": "Потоки CPU (-t)",                 "en": "CPU threads (-t)"},
     "--cache-type-k":    {"ru": "Формат Key Cache",                "en": "Key Cache format"},
     "--cache-type-v":    {"ru": "Формат Value Cache",              "en": "Value Cache format"},
-    "--no-mmap":         {"ru": "Отключить memory mapping",        "en": "Disable memory mapping"},
-    "--mlock":           {"ru": "Блокировка модели в RAM",         "en": "Lock model in RAM"},
+    "--load-mode":       {"ru": "Режим загрузки модели в память",  "en": "Model load mode"},
+    "--agent":           {"ru": "Режим агента WebUI (встроенные инструменты; не включать в недоверенных сетях)", "en": "WebUI agent mode (built-in tools; unsafe on untrusted networks)"},
     "--host":            {"ru": "IP-адрес сервера",                "en": "Server IP address"},
     "--port":            {"ru": "TCP-порт",                        "en": "TCP port"},
     "--keep":            {"ru": "Сохраняемые токены при переполнении", "en": "Tokens kept on overflow"},
@@ -456,8 +456,27 @@ HELP_TEXT_RU = """LLM Server Controller — справка
 
 Основные:
 --ctx-size — размер контекста; --n-gpu-layers — слои на GPU; -fa — Flash Attention;
---threads — потоки CPU; --cache-type-k/v — формат KV Cache; --no-mmap, --mlock — память;
---host, --port — сетевые настройки сервера.
+--threads — потоки CPU; --cache-type-k/v — формат KV Cache; --load-mode — режим загрузки модели;
+--agent — режим агента WebUI; --host, --port — сетевые настройки сервера.
+
+Доступные значения параметра --load-mode:
+auto (режим по умолчанию) — система автоматически выбирает наилучший способ загрузки.
+Как правило, активируется режим mmap, если операционная система его поддерживает.
+none — стандартное последовательное чтение файла модели в память без использования
+оптимизаций ОС.
+mmap — включает механизм проецирования файла в память (Memory Mapping). Модель
+не загружается в RAM целиком при старте, а считывается с диска «по требованию»
+в процессе генерации. Это обеспечивает мгновенный запуск программы и экономит
+оперативную память.
+mlock — принудительно блокирует выделенную память в физической RAM. Операционная
+система гарантированно не отправит веса модели в swap (файл подкачки), что исключает
+внезапные задержки и падение скорости во время ответов. Требует, чтобы объем свободной
+RAM превышал размер модели.
+mmap+mlock — комбинированный режим. Файл проецируется через mmap, но операционная
+система сразу же полностью считывает его и жестко фиксирует в физической оперативной
+памяти.
+dio — активирует Direct I/O (прямой ввод-вывод в обход системного кэша), если эта
+функция поддерживается операционной системой.
 
 Другие группы: Контекст, GPU, Память, CPU, Batch, Генерация, Draft Model, MoE,
 Embeddings, Сервер, Безопасность, Диагностика, а также Backend (CUDA, Vulkan, HIP, Metal, SYCL).
@@ -510,8 +529,24 @@ and logs can be dragged to change the panel heights.
 
 Main:
 --ctx-size — context size; --n-gpu-layers — GPU layers; -fa — Flash Attention;
---threads — CPU threads; --cache-type-k/v — KV Cache format; --no-mmap, --mlock — memory;
---host, --port — server network settings.
+--threads — CPU threads; --cache-type-k/v — KV Cache format; --load-mode — model load mode;
+--agent — WebUI agent mode; --host, --port — server network settings.
+
+Available --load-mode values:
+auto (default) — the system automatically selects the best loading method.
+Usually mmap mode is activated if the operating system supports it.
+none — standard sequential reading of the model file into memory without
+OS optimizations.
+mmap — enables file memory mapping (Memory Mapping). The model is not loaded
+into RAM entirely at startup; instead it is read from disk on demand during
+generation. This provides instant startup and saves RAM.
+mlock — forcibly locks the allocated memory in physical RAM. The OS is guaranteed
+not to send the model weights to swap (page file), which eliminates sudden delays
+and speed drops during responses. Requires free RAM larger than the model size.
+mmap+mlock — combined mode. The file is mapped via mmap, but the OS immediately
+reads it in full and locks it in physical RAM.
+dio — enables Direct I/O (direct input/output bypassing the system cache)
+if supported by the operating system.
 
 Other groups: Context, GPU, Memory, CPU, Batch, Generation, Draft Model, MoE,
 Embeddings, Server, Security, Diagnostics, as well as Backend (CUDA, Vulkan, HIP, Metal, SYCL).
