@@ -6,6 +6,28 @@ LEGACY_PARAM_ALIASES = {
     "-mlock": "--mlock",
 }
 
+CACHE_TYPE_CHOICES = [
+    "f32",
+    "f16",
+    "bf16",
+    "q4_0",
+    "q4_1",
+    "q5_0",
+    "q5_1",
+    "q8_0",
+    "q8_1",
+    "iq4_nl",
+]
+
+LOAD_MODE_CHOICES = [
+    "auto",
+    "none",
+    "mmap",
+    "mlock",
+    "mmap+mlock",
+    "dio",
+]
+
 PARAM_GROUPS = [
     {
         "id": "main",
@@ -18,10 +40,10 @@ PARAM_GROUPS = [
             {"key": "--n-gpu-layers", "default": "99", "hint": "Слои на GPU (-ngl)"},
             {"key": "-fa", "default": "on", "hint": "Flash Attention (--flash-attn)"},
             {"key": "--threads", "default": "", "hint": "Потоки CPU (-t)"},
-            {"key": "--cache-type-k", "default": "q8_0", "hint": "Формат Key Cache"},
-            {"key": "--cache-type-v", "default": "q8_0", "hint": "Формат Value Cache"},
-            {"key": "--no-mmap", "default": True, "hint": "Отключить memory mapping"},
-            {"key": "--mlock", "default": True, "hint": "Блокировка модели в RAM"},
+            {"key": "--cache-type-k", "default": "q8_0", "choices": CACHE_TYPE_CHOICES, "hint": "Формат Key Cache"},
+            {"key": "--cache-type-v", "default": "q8_0", "choices": CACHE_TYPE_CHOICES, "hint": "Формат Value Cache"},
+            {"key": "--load-mode", "default": "mlock", "choices": LOAD_MODE_CHOICES, "hint": "Режим загрузки модели в память"},
+            {"key": "--agent", "default": False, "hint": "Режим агента WebUI (встроенные инструменты, CORS-прокси)"},
             {"key": "--host", "default": "0.0.0.0", "hint": "IP-адрес сервера"},
             {"key": "--port", "default": "18080", "hint": "TCP-порт"},
         ],
@@ -236,6 +258,17 @@ def normalize_loaded_params(loaded_params):
     for old_key, new_key in LEGACY_PARAM_ALIASES.items():
         if old_key in normalized and new_key not in normalized:
             normalized[new_key] = normalized.pop(old_key)
+
+    # Миграция: --no-mmap и --mlock заменены в llama-server на --load-mode
+    if "--load-mode" not in normalized:
+        no_mmap = bool(normalized.get("--no-mmap", False))
+        mlock = bool(normalized.get("--mlock", False))
+        if mlock:
+            normalized["--load-mode"] = "mlock" if no_mmap else "mmap+mlock"
+        else:
+            normalized["--load-mode"] = "none" if no_mmap else "auto"
+    normalized.pop("--no-mmap", None)
+    normalized.pop("--mlock", None)
 
     device_value = normalized.get("--device", "")
     if device_value:
