@@ -1,4 +1,4 @@
-# LLM Server Controller v0.1.6
+# LLM Server Controller v0.1.7
 
 GUI-приложение для запуска и управления локальным LLM (Large Language Model) сервером на базе llama.cpp.
 
