@@ -341,7 +341,7 @@ class LlamaServerGUI:
                 "release_tag": ""
             },
             "window": {
-                "width": "1000",
+                "width": "1200",
                 "height": "900"
             },
             "sounds": {
