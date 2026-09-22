@@ -58,12 +58,12 @@ jobs:
           cp dist/LLMServerController package/
           cp packaging/llmservercontroller.desktop package/
 
-          cp "icon/16х16.png" package/16x16.png
-          cp "icon/24х24.png" package/24x24.png
-          cp "icon/32х32.png" package/32x32.png
-          cp "icon/icon48х48.png" package/48x48.png
-          cp "icon/64х64.png" package/64x64.png
-          cp "icon/256х256.png" package/256x256.png
+          cp "icon/16x16.png" package/16x16.png
+          cp "icon/24x24.png" package/24x24.png
+          cp "icon/32x32.png" package/32x32.png
+          cp "icon/icon48x48.png" package/48x48.png
+          cp "icon/64x64.png" package/64x64.png
+          cp "icon/256x256.png" package/256x256.png
 
           chmod +x package/LLMServerController
 

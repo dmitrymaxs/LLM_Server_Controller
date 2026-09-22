@@ -6,21 +6,21 @@ from glob import glob
 project_dir = os.path.abspath(os.getcwd())
 icon_dir = os.path.join(project_dir, 'icon')
 icon_png_candidates = [
-    os.path.join(icon_dir, '256х256.png'),
-    os.path.join(icon_dir, '64х64.png'),
-    os.path.join(icon_dir, '32х32.png'),
-    os.path.join(icon_dir, '24х24.png'),
-    os.path.join(icon_dir, '16х16.png'),
-    os.path.join(icon_dir, 'icon48х48.png'),
+    os.path.join(icon_dir, '256x256.png'),
+    os.path.join(icon_dir, '64x64.png'),
+    os.path.join(icon_dir, '32x32.png'),
+    os.path.join(icon_dir, '24x24.png'),
+    os.path.join(icon_dir, '16x16.png'),
+    os.path.join(icon_dir, 'icon48x48.png'),
 ]
 icon_png = next((path for path in icon_png_candidates if os.path.exists(path)), None)
 icon_ico_candidates = [
-    os.path.join(icon_dir, '256х256.ico'),
-    os.path.join(icon_dir, '64х64.ico'),
-    os.path.join(icon_dir, '48х48.ico'),
-    os.path.join(icon_dir, '32х32.ico'),
-    os.path.join(icon_dir, '24х24.ico'),
-    os.path.join(icon_dir, '16х16.ico'),
+    os.path.join(icon_dir, '256x256.ico'),
+    os.path.join(icon_dir, '64x64.ico'),
+    os.path.join(icon_dir, '48x48.ico'),
+    os.path.join(icon_dir, '32x32.ico'),
+    os.path.join(icon_dir, '24x24.ico'),
+    os.path.join(icon_dir, '16x16.ico'),
 ]
 icon_ico = next((path for path in icon_ico_candidates if os.path.exists(path)), None)
 if icon_ico is None:

@@ -18,12 +18,15 @@ def _map(key: str, ru: str, en: str) -> dict:
 
 TRANSLATIONS = {
     # --- Заголовок окна ---
-    "app_title": _map("app_title", "LLM Server Controller v.0.1.6", "LLM Server Controller v.0.1.6"),
+    "app_title": _map("app_title", "LLM Server Controller v.0.1.8", "LLM Server Controller v.0.1.8"),
 
     # --- Меню ---
     "menu_file": _map("menu_file", "Файл", "File"),
     "menu_params": _map("menu_params", "Параметры", "Parameters"),
     "menu_sounds": _map("menu_sounds", "Звуки", "Sounds"),
+    "menu_view": _map("menu_view", "Вид", "View"),
+    "theme_light": _map("theme_light", "Светлая тема", "Light theme"),
+    "theme_dark": _map("theme_dark", "Тёмная тема", "Dark theme"),
     "menu_help": _map("menu_help", "Справка", "Help"),
 
     "menu_import": _map("menu_import", "Импорт", "Import"),
@@ -32,6 +35,73 @@ TRANSLATIONS = {
     "menu_exit": _map("menu_exit", "Выход", "Exit"),
     "menu_help_help": _map("menu_help_help", "Справка", "Help"),
     "menu_about": _map("menu_about", "О программе", "About"),
+    "menu_check_updates": _map("menu_check_updates", "Проверить обновления", "Check for updates"),
+    "title_updates": _map("title_updates", "Проверка обновлений", "Update check"),
+    "update_checking": _map("update_checking", "Проверка обновлений...", "Checking for updates..."),
+    "updates_up_to_date": _map(
+        "updates_up_to_date",
+        "У вас последние версии: приложение {app}, llama.cpp {llama}.",
+        "You have the latest versions: app {app}, llama.cpp {llama}.",
+    ),
+    "update_check_failed": _map(
+        "update_check_failed",
+        "Не удалось проверить обновления: {error}",
+        "Failed to check for updates: {error}",
+    ),
+    "update_app_available": _map(
+        "update_app_available",
+        "Доступна новая версия приложения: {latest} (у вас {current})",
+        "New app version available: {latest} (you have {current})",
+    ),
+    "update_llama_available": _map(
+        "update_llama_available",
+        "Доступна новая сборка llama.cpp: {latest} (установлена {current})",
+        "New llama.cpp build available: {latest} (installed {current})",
+    ),
+    "update_llama_not_installed": _map(
+        "update_llama_not_installed",
+        "llama.cpp ещё не установлен. Последняя сборка: {latest}.",
+        "llama.cpp is not installed yet. Latest build: {latest}.",
+    ),
+    "update_llama_unknown": _map(
+        "update_llama_unknown",
+        "Не удалось определить версию llama.cpp ({exe}). Последняя сборка: {latest}.",
+        "Could not determine llama.cpp version ({exe}). Latest build: {latest}.",
+    ),
+    "update_app_uptodate": _map(
+        "update_app_uptodate",
+        "Приложение актуально: {current}",
+        "App is up to date: {current}",
+    ),
+    "update_llama_uptodate": _map(
+        "update_llama_uptodate",
+        "Сборка llama.cpp актуальна: {current}",
+        "llama.cpp build is up to date: {current}",
+    ),
+    "label_server_version": _map(
+        "label_server_version",
+        "Установленная версия: {version}",
+        "Installed version: {version}",
+    ),
+    "server_version_checking": _map(
+        "server_version_checking",
+        "Установленная версия: определение...",
+        "Installed version: detecting...",
+    ),
+    "server_version_unknown": _map(
+        "server_version_unknown",
+        "Установленная версия: неизвестна",
+        "Installed version: unknown",
+    ),
+    "server_version_not_found": _map(
+        "server_version_not_found",
+        "Установленная версия: файл не найден",
+        "Installed version: file not found",
+    ),
+    "badge_prefix": _map("badge_prefix", "Актуальная версия: ", "Latest version: "),
+    "badge_app": _map("badge_app", "app {tag} ↓", "app {tag} ↓"),
+    "badge_llama": _map("badge_llama", "llama.cpp {tag} ↓", "llama.cpp {tag} ↓"),
+    "btn_open_releases": _map("btn_open_releases", "Открыть релизы", "Open releases"),
     "menu_sound_loaded": _map("menu_sound_loaded", "Звук загрузки", "Loaded sound"),
     "menu_sound_stopped": _map("menu_sound_stopped", "Звук отключения", "Stopped sound"),
 

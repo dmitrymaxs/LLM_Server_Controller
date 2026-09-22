@@ -25,34 +25,84 @@ from params_config import (
     build_default_params,
     normalize_loaded_params,
 )
-from releases import fetch_windows_assets, fetch_linux_assets, build_download_url
+from releases import (
+    fetch_windows_assets,
+    fetch_linux_assets,
+    build_download_url,
+    fetch_github_latest_release,
+    get_llama_server_version,
+    is_newer_tag,
+    APP_GITHUB_REPO,
+)
 from i18n import I18n, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 CONFIG_FILE = "llama_config.json"
 APP_ICON_ICO_CANDIDATES = [
-    "256х256.ico",
-    "64х64.ico",
-    "48х48.ico",
-    "32х32.ico",
-    "24х24.ico",
-    "16х16.ico",
+    "256x256.ico",
+    "64x64.ico",
+    "48x48.ico",
+    "32x32.ico",
+    "24x24.ico",
+    "16x16.ico",
 ]
 APP_ICON_PNG_CANDIDATES = [
-    "256х256.png",
-    "64х64.png",
-    "32х32.png",
-    "24х24.png",
-    "16х16.png",
-    "icon48х48.png",
+    "256x256.png",
+    "64x64.png",
+    "32x32.png",
+    "24x24.png",
+    "16x16.png",
+    "icon48x48.png",
 ]
-APP_VERSION = "0.1.7"
+APP_VERSION = "0.1.8"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
 LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
+APP_RELEASES_URL = f"https://github.com/{APP_GITHUB_REPO}/releases"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
 LLAMA_SERVER_FILENAME = "llama-server.exe" if sys.platform == "win32" else "llama-server"
 LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)" if sys.platform == "win32" else "Linux x64 (Vulkan)"
+THEME_LIGHT = "light"
+THEME_DARK = "dark"
+THEME_NAMES = (THEME_LIGHT, THEME_DARK)
+THEMES = {
+    THEME_LIGHT: {
+        "bg": "#f0f0f0",
+        "fg": "#000000",
+        "secondary_fg": "#555555",
+        "muted_fg": "#777777",
+        "entry_bg": "#ffffff",
+        "entry_fg": "#000000",
+        "button_bg": "#e1e1e1",
+        "button_fg": "#000000",
+        "check_select": "#ffffff",
+        "select_bg": "#0078d7",
+        "select_fg": "#ffffff",
+        "menu_bg": "#f0f0f0",
+        "menu_fg": "#000000",
+        "link_fg": "#1565c0",
+        "log_bg": "#1e1e1e",
+        "log_fg": "#d4d4d4",
+    },
+    THEME_DARK: {
+        "bg": "#2b2b2b",
+        "fg": "#e6e6e6",
+        "secondary_fg": "#b8b8b8",
+        "muted_fg": "#9a9a9a",
+        "entry_bg": "#3c3f41",
+        "entry_fg": "#e6e6e6",
+        "button_bg": "#3c3f41",
+        "button_fg": "#e6e6e6",
+        "check_select": "#3c3f41",
+        "select_bg": "#214972",
+        "select_fg": "#ffffff",
+        "menu_bg": "#2b2b2b",
+        "menu_fg": "#e6e6e6",
+        "link_fg": "#64b5f6",
+        "log_bg": "#1e1e1e",
+        "log_fg": "#d4d4d4",
+    },
+}
 
 
 def get_app_base_dir():
@@ -91,7 +141,7 @@ def get_user_config_path():
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Server Controller v.0.1.7")
+        self.root.title("LLM Server Controller v.0.1.8")
         self.root.geometry("1000x900")
         self.apply_app_icon()
 
@@ -109,6 +159,11 @@ class LlamaServerGUI:
 
         self.config = self.load_config()
         self.i18n = I18n(self.config.get("language", DEFAULT_LANGUAGE))
+        initial_theme = self.config.get("theme", THEME_LIGHT)
+        if initial_theme not in THEME_NAMES:
+            initial_theme = THEME_LIGHT
+        self.theme_var = tk.StringVar(value=initial_theme)
+        self._theme_menus = []
         self.param_entries = {}
         self.param_group_frames = {}
         self.param_group_meta = {}
@@ -121,12 +176,23 @@ class LlamaServerGUI:
         self.enable_stopped_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("stopped", True))
         self.open_browser_on_load_var = tk.BooleanVar(value=self.config.get("open_browser_on_load", True))
         self.install_in_progress = False
+        self.update_info = {
+            "app_tag": None,
+            "app_url": None,
+            "app_error": None,
+            "llama_tag": None,
+            "llama_error": None,
+            "llama_current": "",
+        }
+        self.update_badge = None
+        self._exe_edit_job = None
 
         self.apply_window_geometry()
         self.create_menu()
         self.create_widgets()
         self.apply_config_to_form()
         self.root.after(150, self._init_paned_sash)
+        self.root.after(2500, lambda: self.check_updates(auto=True))
 
     def _init_paned_sash(self):
         if self.main_paned is None:
@@ -223,11 +289,13 @@ class LlamaServerGUI:
         file_menu.add_command(label=self.tr("menu_export"), command=self.export_settings)
         file_menu.add_separator()
         file_menu.add_command(label=self.tr("menu_install_llama"), command=self.install_llama_cpp)
+        file_menu.add_command(label=self.tr("btn_devices"), command=self.list_devices)
         file_menu.add_separator()
         file_menu.add_command(label=self.tr("menu_exit"), command=self.on_close)
 
         help_menu = tk.Menu(menu_bar, tearoff=0)
         help_menu.add_command(label=self.tr("menu_help_help"), command=self.show_help)
+        help_menu.add_command(label=self.tr("menu_check_updates"), command=lambda: self.check_updates(auto=False))
         help_menu.add_separator()
         help_menu.add_command(label=self.tr("menu_about"), command=self.show_about)
 
@@ -242,12 +310,25 @@ class LlamaServerGUI:
                 command=lambda gid=group["id"]: self.show_param_section(gid),
             )
 
+        view_menu = tk.Menu(menu_bar, tearoff=0)
+        view_menu.add_radiobutton(
+            label=self.tr("theme_light"), variable=self.theme_var,
+            value=THEME_LIGHT, command=lambda: self.set_theme(THEME_LIGHT),
+        )
+        view_menu.add_radiobutton(
+            label=self.tr("theme_dark"), variable=self.theme_var,
+            value=THEME_DARK, command=lambda: self.set_theme(THEME_DARK),
+        )
+
+        self.file_menu = file_menu
         menu_bar.add_cascade(label=self.tr("menu_file"), menu=file_menu)
         menu_bar.add_cascade(label=self.tr("menu_params"), menu=params_menu)
         menu_bar.add_cascade(label=self.tr("menu_sounds"), menu=sound_menu)
+        menu_bar.add_cascade(label=self.tr("menu_view"), menu=view_menu)
         menu_bar.add_cascade(label=self.tr("menu_help"), menu=help_menu)
         self.root.config(menu=menu_bar)
         self.menu_bar = menu_bar
+        self._theme_menus = [menu_bar, file_menu, help_menu, sound_menu, params_menu, view_menu]
 
     def get_default_config(self):
         return {
@@ -269,6 +350,7 @@ class LlamaServerGUI:
             },
             "open_browser_on_load": True,
             "custom_args": "",
+            "theme": THEME_LIGHT,
             "params": self.default_params.copy()
         }
 
@@ -307,6 +389,9 @@ class LlamaServerGUI:
             })
 
         config["open_browser_on_load"] = bool(loaded_config.get("open_browser_on_load", config["open_browser_on_load"]))
+        loaded_theme = loaded_config.get("theme", "")
+        if loaded_theme in THEME_NAMES:
+            config["theme"] = loaded_theme
         loaded_custom_args = loaded_config.get("custom_args", "")
         config["custom_args"] = loaded_custom_args if isinstance(loaded_custom_args, str) else str(loaded_custom_args or "")
 
@@ -374,6 +459,7 @@ class LlamaServerGUI:
             },
             "open_browser_on_load": self.open_browser_on_load_var.get(),
             "custom_args": self.custom_args_entry.get().strip() if hasattr(self, "custom_args_entry") else self.config.get("custom_args", ""),
+            "theme": self.theme_var.get() if hasattr(self, "theme_var") else self.config.get("theme", THEME_LIGHT),
             "params": params
         }
 
@@ -409,6 +495,285 @@ class LlamaServerGUI:
         else:
             self.install_llama_btn.config(state=tk.NORMAL, text=self.tr("btn_download_llama"))
 
+    # --- Проверка обновлений (приложение + сборки llama.cpp) ---
+    def check_updates(self, auto=False):
+        """Запускает фоновую проверку обновлений. auto=True — тихо (бейдж)."""
+        if getattr(self, "_update_check_running", False):
+            if not auto:
+                self.show_updates_dialog()
+            return
+        self._update_check_running = True
+        self._refresh_update_badge()
+        threading.Thread(target=self._check_updates_worker, args=(auto,), daemon=True).start()
+
+    def _check_updates_worker(self, auto):
+        exe_snapshot = (self.config.get("exe_path") or "").strip()
+        app_tag = app_url = app_error = None
+        try:
+            release = fetch_github_latest_release(APP_GITHUB_REPO, timeout=20)
+            app_tag = release["tag"]
+            app_url = release["url"]
+        except Exception as exc:
+            app_error = str(exc) or exc.__class__.__name__
+        llama_tag = llama_error = None
+        try:
+            if sys.platform == "win32":
+                tag, _assets, _warning = fetch_windows_assets(timeout=30, language=self.i18n.language)
+            else:
+                tag, _assets, _warning = fetch_linux_assets(timeout=30, language=self.i18n.language)
+            llama_tag = tag
+        except Exception as exc:
+            llama_error = str(exc) or exc.__class__.__name__
+        # Версия установленного сервера: сначала спрашиваем сам бинарник
+        # по пути из конфигурации (работает и для нестандартной папки),
+        # запасной вариант — тег папки установки, если exe лежит в ней.
+        # Если путь сменили, пока воркер работал, — чужой результат отбрасываем.
+        exe_path = (self.config.get("exe_path") or "").strip()
+        llama_current = get_llama_server_version(exe_path, timeout=15)
+        if not llama_current:
+            llama_current = self._install_tag_for_exe(exe_path)
+        if (self.config.get("exe_path") or "").strip() != exe_snapshot:
+            llama_current = ""
+        self.root.after(
+            0,
+            lambda: self._on_updates_checked(
+                auto, app_tag, app_url, app_error, llama_tag, llama_error,
+                llama_current, exe_snapshot,
+            ),
+        )
+
+    def _on_updates_checked(self, auto, app_tag, app_url, app_error, llama_tag, llama_error,
+                            llama_current="", exe_snapshot=None):
+        self._update_check_running = False
+        if exe_snapshot is not None and self._current_exe_path() != exe_snapshot:
+            llama_current = ""
+        self.update_info.update({
+            "app_tag": app_tag,
+            "app_url": app_url or APP_RELEASES_URL,
+            "app_error": app_error,
+            "llama_tag": llama_tag,
+            "llama_error": llama_error,
+            "llama_current": llama_current,
+        })
+        self._refresh_update_badge()
+        self._refresh_server_version_label(detect=False)
+        if not auto:
+            self.show_updates_dialog()
+
+    def _install_tag_for_exe(self, exe):
+        """Тег из install.release_tag, но только если exe лежит в папке установки.
+
+        Иначе (сервер выбран вручную из другой папки) тег к этому файлу
+        отношения не имеет — возвращаем "", чтобы не показывать чужую версию.
+        """
+        install = self.config.get("install", {})
+        tag = (install.get("release_tag") or "").strip()
+        directory = (install.get("directory") or "").strip()
+        if not tag:
+            return ""
+        if not exe or not directory:
+            return tag
+        try:
+            exe_abs = os.path.normcase(os.path.abspath(os.path.normpath(exe)))
+            dir_abs = os.path.normcase(os.path.abspath(os.path.normpath(directory)))
+            if os.path.commonpath([exe_abs, dir_abs]) == dir_abs:
+                return tag
+        except ValueError:
+            return ""
+        except OSError:
+            return tag
+        return ""
+
+    def _llama_current(self):
+        """Установленная сборка: живой опрос, иначе тег папки установки."""
+        current = (self.update_info.get("llama_current") or "").strip()
+        if not current:
+            current = self._install_tag_for_exe(self._current_exe_path())
+        return current
+
+    def _current_exe_path(self):
+        """Путь к серверу: из поля формы, иначе из конфига."""
+        if hasattr(self, "exe_entry"):
+            return self.exe_entry.get().strip()
+        return (self.config.get("exe_path") or "").strip()
+
+    def _refresh_server_version_label(self, detect=True):
+        """Показывает актуальную версию llama-server рядом с полем «Сервер»."""
+        label = getattr(self, "server_version_label", None)
+        if label is None:
+            return
+        exe = self._current_exe_path()
+        try:
+            if not exe:
+                label.config(text="")
+                return
+            if not os.path.exists(exe):
+                label.config(text=self.tr("server_version_not_found"))
+                return
+            current = self._llama_current()
+            if current:
+                label.config(text=self.tr("label_server_version", version=current))
+                return
+            label.config(text=self.tr("server_version_checking"))
+            if detect:
+                self._detect_server_version_async()
+        except tk.TclError:
+            pass
+
+    def _detect_server_version_async(self):
+        if getattr(self, "_server_version_detecting", False):
+            return
+        exe = self._current_exe_path()
+        if not exe or not os.path.exists(exe):
+            return
+        self._server_version_detecting = True
+        threading.Thread(target=self._server_version_worker, args=(exe,), daemon=True).start()
+
+    def _server_version_worker(self, exe):
+        version = get_llama_server_version(exe, timeout=15)
+        self.root.after(0, lambda: self._on_server_version_detected(exe, version))
+
+    def _on_server_version_detected(self, exe, version):
+        self._server_version_detecting = False
+        label = getattr(self, "server_version_label", None)
+        if label is None:
+            return
+        if self._current_exe_path() != exe:
+            return
+        try:
+            if version:
+                self.update_info["llama_current"] = version
+                label.config(text=self.tr("label_server_version", version=version))
+                self._refresh_update_badge()
+            else:
+                label.config(text=self.tr("server_version_unknown"))
+        except tk.TclError:
+            pass
+
+    def _on_exe_path_changed(self, detect=True):
+        """Путь к серверу сменился: сбрасываем кэшированную версию,
+        обновляем надпись «Установленная версия» и бейдж обновлений."""
+        self.update_info["llama_current"] = ""
+        self._refresh_server_version_label(detect=detect)
+        self._refresh_update_badge()
+
+    def _on_exe_entry_edited(self, _event=None):
+        """Ручной ввод пути: обновляем версию с задержкой, чтобы не
+        запускать опрос на каждое нажатие клавиши."""
+        old_job = getattr(self, "_exe_edit_job", None)
+        if old_job is not None:
+            try:
+                self.root.after_cancel(old_job)
+            except tk.TclError:
+                pass
+        self._exe_edit_job = self.root.after(700, self._on_exe_entry_changed_debounced)
+
+    def _on_exe_entry_changed_debounced(self):
+        self._exe_edit_job = None
+        self._on_exe_path_changed()
+
+    def _updates_available(self):
+        """Возвращает (app_newer, llama_newer)."""
+        info = self.update_info
+        app_newer = bool(info.get("app_tag")) and is_newer_tag(info["app_tag"], APP_VERSION)
+        llama_current = self._llama_current()
+        if info.get("llama_tag"):
+            llama_newer = (not llama_current) or is_newer_tag(info["llama_tag"], llama_current)
+        else:
+            llama_newer = False
+        return app_newer, llama_newer
+
+    def _refresh_update_badge(self):
+        badge = getattr(self, "update_badge", None)
+        if badge is None:
+            return
+        pal = self._current_palette()
+        try:
+            if getattr(self, "_update_check_running", False):
+                badge.config(text=self.tr("update_checking"), fg=pal["link_fg"])
+                return
+            app_newer, llama_newer = self._updates_available()
+            parts = []
+            if app_newer:
+                parts.append(self.tr("badge_app", tag=self.update_info["app_tag"]))
+            if llama_newer:
+                parts.append(self.tr("badge_llama", tag=self.update_info["llama_tag"]))
+            text = self.tr("badge_prefix") + " • ".join(parts) if parts else ""
+            badge.config(text=text, fg=pal["link_fg"])
+        except tk.TclError:
+            pass
+
+    def show_updates_dialog(self):
+        info = self.update_info
+        app_newer, llama_newer = self._updates_available()
+        window = tk.Toplevel(self.root)
+        window.title(self.tr("title_updates"))
+        window.geometry("520x300")
+        window.transient(self.root)
+
+        if not info.get("app_tag") and not info.get("llama_tag"):
+            error = info.get("app_error") or info.get("llama_error") or ""
+            if getattr(self, "_update_check_running", False):
+                summary = self.tr("update_checking")
+            elif error:
+                summary = self.tr("update_check_failed", error=error)
+            else:
+                summary = self.tr("update_checking")
+            app_row = summary
+            llama_row = ""
+        else:
+            if app_newer:
+                app_row = self.tr("update_app_available", latest=info["app_tag"], current=APP_VERSION)
+            else:
+                app_row = self.tr("update_app_uptodate", current=APP_VERSION)
+            llama_current = self._llama_current()
+            if info.get("llama_tag"):
+                if llama_newer and llama_current:
+                    llama_row = self.tr(
+                        "update_llama_available",
+                        latest=info["llama_tag"], current=llama_current,
+                    )
+                elif llama_newer:
+                    exe_name = os.path.basename((self.config.get("exe_path") or "").strip())
+                    if exe_name:
+                        llama_row = self.tr(
+                            "update_llama_unknown",
+                            exe=exe_name, latest=info["llama_tag"],
+                        )
+                    else:
+                        llama_row = self.tr("update_llama_not_installed", latest=info["llama_tag"])
+                else:
+                    llama_row = self.tr("update_llama_uptodate", current=llama_current or info["llama_tag"])
+            else:
+                llama_row = self.tr("update_check_failed", error=info.get("llama_error") or "")
+
+        def open_releases():
+            webbrowser.open(info.get("app_url") or APP_RELEASES_URL)
+
+        def install_llama():
+            window.destroy()
+            self.install_llama_cpp()
+
+        app_frame = tk.Frame(window)
+        app_frame.pack(fill=tk.X, padx=12, pady=(12, 4))
+        tk.Label(
+            app_frame, text=app_row, anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        tk.Button(app_frame, text=self.tr("btn_open_releases"), command=open_releases).pack(side=tk.RIGHT, padx=(8, 0))
+
+        if llama_row:
+            llama_frame = tk.Frame(window)
+            llama_frame.pack(fill=tk.X, padx=12, pady=4)
+            tk.Label(
+                llama_frame, text=llama_row, anchor=tk.W, justify=tk.LEFT, wraplength=340,
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tk.Button(llama_frame, text=self.tr("menu_install_llama"), command=install_llama).pack(side=tk.RIGHT, padx=(8, 0))
+
+        buttons = tk.Frame(window)
+        buttons.pack(fill=tk.X, padx=12, pady=(12, 12))
+        tk.Button(buttons, text=self.tr("btn_close"), command=window.destroy).pack(side=tk.RIGHT)
+        self.apply_theme()
+
     def toggle_language(self):
         """Переключает язык интерфейса RU <-> EN с перестроением окна."""
         if self.is_running:
@@ -418,6 +783,145 @@ class LlamaServerGUI:
         self.config["language"] = self.i18n.language
         self.rebuild_ui()
         self.save_config()
+
+    def set_theme(self, theme):
+        """Переключает светлую/тёмную тему и сохраняет выбор в конфиг."""
+        if theme not in THEME_NAMES:
+            return
+        self.theme_var.set(theme)
+        self.config["theme"] = theme
+        self.apply_theme()
+        self.save_config()
+
+    def _current_palette(self):
+        theme = self.theme_var.get() if hasattr(self, "theme_var") else THEME_LIGHT
+        if theme not in THEMES:
+            theme = THEME_LIGHT
+        return THEMES[theme]
+
+    def apply_theme(self):
+        """Применяет текущую тему ко всем виджетам окна (включая диалоги)."""
+        pal = self._current_palette()
+        try:
+            self.root.configure(bg=pal["bg"])
+        except tk.TclError:
+            pass
+        try:
+            style = ttk.Style(self.root)
+            try:
+                style.theme_use("clam")
+            except tk.TclError:
+                pass
+            style.configure(
+                "TCombobox",
+                fieldbackground=pal["entry_bg"],
+                background=pal["button_bg"],
+                foreground=pal["entry_fg"],
+                arrowcolor=pal["fg"],
+            )
+            style.map(
+                "TCombobox",
+                fieldbackground=[("readonly", pal["entry_bg"])],
+                foreground=[("readonly", pal["entry_fg"])],
+                background=[("readonly", pal["button_bg"])],
+                arrowcolor=[("readonly", pal["fg"])],
+            )
+        except tk.TclError:
+            pass
+        for menu in getattr(self, "_theme_menus", []):
+            try:
+                menu.configure(
+                    bg=pal["menu_bg"],
+                    fg=pal["menu_fg"],
+                    activebackground=pal["select_bg"],
+                    activeforeground=pal["select_fg"],
+                    selectcolor=pal["fg"],
+                )
+            except tk.TclError:
+                pass
+        self._theme_widget_tree(self.root, pal)
+        self._apply_run_state_to_controls()
+        self._refresh_update_badge()
+
+    def _theme_widget_tree(self, node, pal):
+        for child in node.winfo_children():
+            self._theme_widget(child, pal)
+            self._theme_widget_tree(child, pal)
+
+    def _theme_widget(self, widget, pal):
+        try:
+            widget_class = widget.winfo_class()
+        except tk.TclError:
+            return
+        try:
+            if widget_class in ("Frame", "Labelframe", "PanedWindow", "Toplevel", "Tk"):
+                widget.configure(bg=pal["bg"])
+            elif widget_class == "Canvas":
+                widget.configure(bg=pal["bg"], highlightbackground=pal["bg"])
+            elif widget_class == "Label":
+                if widget == getattr(self, "update_badge", None):
+                    return
+                try:
+                    current_fg = widget.cget("fg")
+                except tk.TclError:
+                    current_fg = ""
+                if current_fg in ("#555555",):
+                    widget.configure(bg=pal["bg"], fg=pal["secondary_fg"])
+                elif current_fg in ("#777777",):
+                    widget.configure(bg=pal["bg"], fg=pal["muted_fg"])
+                else:
+                    widget.configure(bg=pal["bg"], fg=pal["fg"])
+            elif widget_class == "Button":
+                if widget in getattr(self, "_semantic_buttons", ()):
+                    return
+                widget.configure(
+                    bg=pal["button_bg"], fg=pal["button_fg"],
+                    activebackground=pal["select_bg"],
+                    activeforeground=pal["select_fg"],
+                )
+            elif widget_class == "Checkbutton":
+                widget.configure(
+                    bg=pal["bg"], fg=pal["fg"],
+                    activebackground=pal["bg"],
+                    activeforeground=pal["fg"],
+                    selectcolor=pal["check_select"],
+                )
+            elif widget_class == "Entry":
+                widget.configure(
+                    bg=pal["entry_bg"], fg=pal["entry_fg"],
+                    insertbackground=pal["entry_fg"],
+                    selectbackground=pal["select_bg"],
+                    selectforeground=pal["select_fg"],
+                )
+            elif widget_class == "Listbox":
+                widget.configure(
+                    bg=pal["entry_bg"], fg=pal["entry_fg"],
+                    selectbackground=pal["select_bg"],
+                    selectforeground=pal["select_fg"],
+                    highlightbackground=pal["bg"],
+                )
+            elif widget_class == "Text":
+                if widget == getattr(self, "log_area", None):
+                    widget.configure(
+                        bg=pal["log_bg"], fg=pal["log_fg"],
+                        insertbackground=pal["log_fg"],
+                        selectbackground=pal["select_bg"],
+                        selectforeground=pal["select_fg"],
+                    )
+                else:
+                    widget.configure(
+                        bg=pal["entry_bg"], fg=pal["entry_fg"],
+                        insertbackground=pal["entry_fg"],
+                        selectbackground=pal["select_bg"],
+                        selectforeground=pal["select_fg"],
+                    )
+            elif widget_class == "Scrollbar":
+                widget.configure(
+                    bg=pal["button_bg"], troughcolor=pal["bg"],
+                    activebackground=pal["select_bg"],
+                )
+        except tk.TclError:
+            pass
 
     def _capture_form_state(self):
         """Снимок значений формы (пути, размеры, параметры) для восстановления
@@ -534,13 +1038,16 @@ class LlamaServerGUI:
         tk.Label(path_frame, text=self.tr("label_server")).grid(row=0, column=0, sticky=tk.W, pady=2)
         self.exe_entry = tk.Entry(path_frame)
         self.exe_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
+        self.exe_entry.bind("<KeyRelease>", self._on_exe_entry_edited)
+        self.exe_entry.bind("<FocusOut>", lambda _event: self._on_exe_path_changed())
         tk.Button(path_frame, text=self.tr("btn_browse"), command=self.browse_exe).grid(row=0, column=2, padx=2, pady=2)
         self.install_llama_btn = tk.Button(path_frame, text=self.tr("btn_download_llama"), command=self.install_llama_cpp)
         self.install_llama_btn.grid(row=0, column=3, padx=2, pady=2)
-        self.list_devices_btn = tk.Button(
-            path_frame, text=self.tr("btn_devices"), command=self.list_devices,
-        )
-        self.list_devices_btn.grid(row=0, column=4, padx=2, pady=2)
+        self.server_version_label = tk.Label(path_frame, text="", font=("Arial", 9, "italic"))
+        self.server_version_label.grid(row=0, column=5, padx=6, pady=2, sticky=tk.W)
+        self.update_badge = tk.Label(path_frame, text="", fg="#1565c0", cursor="hand2", font=("Arial", 9, "bold"))
+        self.update_badge.grid(row=1, column=5, padx=6, pady=2, sticky=tk.W)
+        self.update_badge.bind("<Button-1>", lambda _event: self.show_updates_dialog())
 
         tk.Label(path_frame, text=self.tr("label_model")).grid(row=1, column=0, sticky=tk.W, pady=2)
         self.model_entry = tk.Entry(path_frame)
@@ -589,6 +1096,7 @@ class LlamaServerGUI:
             font=("Arial", 10, "bold"), command=self.restart_server, state=tk.DISABLED,
         )
         self.restart_btn.pack(side=tk.LEFT, padx=4)
+        self._semantic_buttons = (self.start_btn, self.stop_btn, self.restart_btn)
 
         tk.Frame(toolbar, width=12).pack(side=tk.LEFT)
 
@@ -733,6 +1241,16 @@ class LlamaServerGUI:
 
         self.show_param_group(self.active_param_group_id)
 
+        if not hasattr(self, "_semantic_buttons"):
+            self._semantic_buttons = (
+                getattr(self, "start_btn", None),
+                getattr(self, "stop_btn", None),
+                getattr(self, "restart_btn", None),
+            )
+        self._theme_menus.append(self.log_context_menu)
+        self.apply_theme()
+        self._refresh_server_version_label(detect=False)
+
     def _build_param_group_grid(self, parent, group):
         row, col = 0, 0
         for spec in group["params"]:
@@ -828,6 +1346,7 @@ class LlamaServerGUI:
         if file_path:
             self.exe_entry.delete(0, tk.END)
             self.exe_entry.insert(0, os.path.normpath(file_path))
+            self._on_exe_path_changed()
 
     def install_llama_cpp(self):
         if self.install_in_progress:
@@ -977,6 +1496,7 @@ class LlamaServerGUI:
         tk.Button(buttons, text=self.tr("btn_install_confirm"), command=confirm_selection).pack(side=tk.RIGHT, padx=(4, 0))
         tk.Button(buttons, text=self.tr("btn_cancel"), command=cancel_selection).pack(side=tk.RIGHT)
 
+        self.apply_theme()
         self.root.wait_window(dialog)
         return selected_value["asset"]
 
@@ -1090,6 +1610,7 @@ class LlamaServerGUI:
             "release_tag": release_tag,
         }
         self.save_config()
+        self._on_exe_path_changed()
         self.log(self.tr("log_exe_found", path=exe_path))
         messagebox.showinfo(
             self.tr("msg_install_complete"),
@@ -1118,8 +1639,17 @@ class LlamaServerGUI:
             messagebox.showerror(self.tr("msg_error"), self.tr("err_invalid_exe", exe=LLAMA_SERVER_FILENAME))
             return
 
-        self.list_devices_btn.config(state=tk.DISABLED, text=self.tr("btn_devices_loading"))
+        self._set_devices_menu_state(tk.DISABLED)
         threading.Thread(target=self._run_list_devices, args=(exe_path,), daemon=True).start()
+
+    def _set_devices_menu_state(self, state):
+        menu = getattr(self, "file_menu", None)
+        if menu is None:
+            return
+        try:
+            menu.entryconfig(self.tr("btn_devices"), state=state)
+        except tk.TclError:
+            pass
 
     def _run_list_devices(self, exe_path):
         cmd = [exe_path, "--list-devices"]
@@ -1157,7 +1687,7 @@ class LlamaServerGUI:
             self.root.after(0, self._list_devices_finished)
 
     def _list_devices_finished(self):
-        self.list_devices_btn.config(state=tk.NORMAL, text=self.tr("btn_devices"))
+        self._set_devices_menu_state(tk.NORMAL)
 
     def _show_devices_result(self, title, output, cmd):
         self.log(f"--- {title} ---\n{self.tr('log_command')} {' '.join(cmd)}\n\n{output}\n")
@@ -1190,6 +1720,7 @@ class LlamaServerGUI:
 
         tk.Button(btn_frame, text=self.tr("btn_copy"), command=copy_output).pack(side=tk.LEFT, padx=4)
         tk.Button(btn_frame, text=self.tr("btn_close"), command=window.destroy).pack(side=tk.LEFT, padx=4)
+        self.apply_theme()
 
     def browse_model(self):
         file_path = filedialog.askopenfilename(
@@ -1261,6 +1792,7 @@ class LlamaServerGUI:
         self.apply_window_geometry()
         self.apply_config_to_form()
         self.save_config()
+        self._on_exe_path_changed()
         messagebox.showinfo(self.tr("title_import"), self.tr("msg_import_done"))
 
     def export_settings(self):
@@ -1290,6 +1822,7 @@ class LlamaServerGUI:
         self.apply_window_geometry()
         self.apply_config_to_form()
         self.save_config()
+        self._on_exe_path_changed(detect=False)
         messagebox.showinfo(self.tr("msg_success"), self.tr("msg_reset_done"))
 
     def apply_window_size_from_fields(self):
@@ -1313,6 +1846,7 @@ class LlamaServerGUI:
 
         close_btn = tk.Button(help_window, text=self.tr("btn_close"), command=help_window.destroy)
         close_btn.pack(pady=(0, 10))
+        self.apply_theme()
 
     def show_about(self):
         about_window = tk.Toplevel(self.root)
@@ -1338,7 +1872,7 @@ class LlamaServerGUI:
         donate_btn = tk.Button(
             about_window,
             text="Donate",
-            command=lambda: webbrowser.open("pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"),
+            command=lambda: webbrowser.open("https://pay.heleket.com/wallet/61486d55-7249-4cab-8596-fbd38b3e9047"),
         )
         donate_btn.pack(pady=(10, 10))
 
@@ -1364,6 +1898,7 @@ class LlamaServerGUI:
 
         close_btn = tk.Button(about_window, text="OK", command=_on_about_close)
         close_btn.pack(pady=(0, 10))
+        self.apply_theme()
 
         about_window.protocol("WM_DELETE_WINDOW", _on_about_close)
         blink_job["id"] = about_window.after(700, _toggle_donate_blink)
@@ -1587,8 +2122,8 @@ class LlamaServerGUI:
         self.root.after(500, self.start_server)
 
     def get_server_url(self):
-        host = self.get_param_value("host") or "localhost"
-        port = self.get_param_value("port") or "18080"
+        host = self.get_param_value("--host") or "localhost"
+        port = self.get_param_value("--port") or "18080"
 
         if host in {"0.0.0.0", "::", "*", ""}:
             host = "localhost"

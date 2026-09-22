@@ -46,14 +46,14 @@ main_v_1.py
 llama_config.json
 
 icon/*
-!icon/256х256.ico
-!icon/64х64.ico
-!icon/32х32.ico
-!icon/24х24.ico
-!icon/16х16.ico
-!icon/256х256.png
-!icon/64х64.png
-!icon/32х32.png
-!icon/24х24.png
-!icon/16х16.png
-!icon/icon48х48.png
+!icon/256x256.ico
+!icon/64x64.ico
+!icon/32x32.ico
+!icon/24x24.ico
+!icon/16x16.ico
+!icon/256x256.png
+!icon/64x64.png
+!icon/32x32.png
+!icon/24x24.png
+!icon/16x16.png
+!icon/icon48x48.png

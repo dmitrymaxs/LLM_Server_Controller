@@ -106,6 +106,88 @@ def fetch_latest_release_tag(timeout: int = 30) -> str:
     return str(tag)
 
 
+APP_GITHUB_REPO = "dmitrymaxs/LLM_Server_Controller"
+
+
+def fetch_github_latest_release(repo: str, timeout: int = 20) -> Dict[str, str]:
+    """Возвращает latest release произвольного GitHub-репо: tag, url, name."""
+    data = _http_get_json(f"https://api.github.com/repos/{repo}/releases/latest", timeout=timeout)
+    tag = str(data.get("tag_name") or data.get("name") or "").strip()
+    if not tag:
+        raise RuntimeError("GitHub API did not return tag_name for latest release")
+    return {
+        "tag": tag,
+        "url": str(data.get("html_url") or f"https://github.com/{repo}/releases"),
+        "name": str(data.get("name") or tag),
+    }
+
+
+def parse_version_tuple(text: str) -> Tuple[int, ...]:
+    """Извлекает числовой кортеж из тега: v0.1.8 -> (0, 1, 8), b9870 -> (9870,)."""
+    return tuple(int(part) for part in re.findall(r"\d+", text or ""))
+
+
+def parse_llama_version_output(output: str) -> str:
+    """Вытаскивает тег сборки (bNNNN) из вывода `llama-server --version`.
+
+    Примеры входов: "version: 9870 (abc123...)", "llama.cpp b9870", "build 9870".
+    Возвращает "b9870" или "" если распознать не удалось.
+    """
+    text = output or ""
+    match = re.search(r"\bb\s*(\d{3,})\b", text, re.IGNORECASE)
+    if match:
+        return f"b{match.group(1)}"
+    for pattern in (r"version\s*[:\-]?\s*(\d{3,})", r"build\s+(\d{3,})"):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return f"b{match.group(1)}"
+    return ""
+
+
+def get_llama_server_version(exe_path: str, timeout: int = 15) -> str:
+    """Запускает `llama-server --version` и возвращает тег сборки (bNNNN).
+
+    Путь берётся из конфигурации, поэтому работает и для сервера,
+    установленного вручную в нестандартную папку. При любой ошибке — "".
+    """
+    import os
+    import subprocess
+    import sys
+
+    if not exe_path or not os.path.exists(exe_path):
+        return ""
+    startupinfo = None
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+    try:
+        result = subprocess.run(
+            [exe_path, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            startupinfo=startupinfo,
+            timeout=timeout,
+        )
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        return parse_llama_version_output(output)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return ""
+
+
+def is_newer_tag(latest_tag: str, current_tag: str) -> bool:
+    """True, если latest_tag новее current_tag. Несравнимые, но разные теги — тоже True."""
+    if not latest_tag or latest_tag == current_tag:
+        return False
+    latest_ver = parse_version_tuple(latest_tag)
+    current_ver = parse_version_tuple(current_tag)
+    if latest_ver and current_ver:
+        return latest_ver > current_ver
+    return True
+
+
 def fetch_recent_releases(timeout: int = 30, per_page: int = 40) -> List[Dict[str, Any]]:
     return _http_get_json(f"{GITHUB_API_RELEASES}?per_page={per_page}", timeout=timeout)
 

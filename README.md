@@ -1,4 +1,4 @@
-# LLM Server Controller v0.1.7
+# LLM Server Controller v0.1.8
 
 GUI-приложение для запуска и управления локальным LLM (Large Language Model) сервером на базе llama.cpp.
 
@@ -6,11 +6,14 @@ GUI-приложение для запуска и управления лока�
 
 - **Запуск / остановка / перезапуск** llama-server с графическим интерфейсом
 - **Встроенная установка** llama.cpp — скачивание бинарников с GitHub Releases автоматически
-- **Настройка параметров** llama-server через 12 категорий групп (контекст, GPU, память, CPU, генерация и т.д.)
+- **Настройка параметров** llama-server через 18 категорий групп (контекст, GPU, память, CPU, генерация и т.д.)
 - **Интерфейс на русском / английском**
 - **Логи в реальном времени** — просмотр, копирование, сохранение, очистка
 - **Экспорт/импорт настроек** в JSON-файл
 - **Список устройств GPU** через команду `--list-devices`
+- **Тёмная и светлая темы** — переключение в меню **Вид**, выбор сохраняется
+- **Проверка обновлений** — новых версий приложения и сборок llama.cpp (бейдж «Актуальная версия» и меню **Справка → Проверить обновления**)
+- **Индикатор версии сервера** — рядом с полем «Сервер» всегда видна установленная сборка (определяется живым опросом `llama-server --version`, работает и для нестандартных папок)
 - **Открытие сервера в браузере** после загрузки модели
 
 ## Системные требования
@@ -57,7 +60,7 @@ GUI-приложение для запуска и управления лока�
 
 | Поле | Описание |
 |------|----------|
-| **Сервер** | Путь к `llama-server.exe` (Windows) / `llama-server` (Linux). Кнопка "Обзор" открывает диалог выбора файла. Кнопка "Скачать llama.cpp" — встроенная установка. Кнопка "Устройства" показывает список GPU через `--list-devices`. |
+| **Сервер** | Путь к `llama-server.exe` (Windows) / `llama-server` (Linux). Кнопка "Обзор" открывает диалог выбора файла. Кнопка "Скачать llama.cpp" — встроенная установка. Справа показана **установленная версия** (обновляется при смене файла, в т.ч. ручным вводом пути). Ниже — бейдж **«Актуальная версия»**, если вышли обновления. Список GPU — в меню **Файл → Устройства** (`--list-devices`). |
 | **Модель** | Путь к файлу модели формата `.gguf`. Кнопка "Обзор" открывает диалог выбора файла. |
 | **Размер окна** | Ширина и высота окна приложения в пикселях (например, 1200×800). |
 | **Команды** | Дополнительные аргументы для llama-server (например: `--temp 0.7 --top-k 40`). Поддерживаются кавычки для групповых аргументов. |
@@ -88,7 +91,7 @@ GUI-приложение для запуска и управления лока�
 - **Старт** — запускает llama-server. Статус меняется на оранжевый (загрузка) → зелёный (готов).
 - **Стоп** — останавливает сервер принудительно.
 - **Перезапуск** — сначала останавливает, затем запускает заново.
-- При успешной загрузке модели статус становится **зелёным**, и при включённом选项中 автоматически открывается браузер с URL сервера (`http://localhost:18080/`).
+- При успешной загрузке модели статус становится **зелёным**, и при включённом чекбоксе автоматически открывается браузер с URL сервера (`http://localhost:18080/`).
 
 ### Логи
 
@@ -104,8 +107,18 @@ GUI-приложение для запуска и управления лока�
 | **Файл → Импорт** | Загружает настройки из внешнего JSON-файла |
 | **Файл → Экспорт** | Сохраняет текущие настройки в выбранный JSON-файл |
 | **Файл → Установить llama.cpp** | Запускает встроенную установку |
+| **Файл → Устройства** | Показывает список GPU/CPU через `--list-devices` |
 | **Параметры** | Переключение между группами параметров |
 | **Звуки** | Вкл/выкл звуковые сигналы при загрузке / остановке сервера |
+| **Вид** | Переключение светлой / тёмной темы |
+| **Справка → Проверить обновления** | Проверяет новые версии приложения и сборок llama.cpp |
+
+### Обновления
+
+- При старте приложение тихо проверяет новые версии: свою (GitHub Releases) и свежие сборки llama.cpp.
+- Если есть новое — в панели путей под версией сервера появляется бейдж **«Актуальная версия: …»** (клик открывает подробности).
+- Диалог проверки показывает текущие и доступные версии; кнопки **«Открыть релизы»** (у строки приложения) и **«Установить llama.cpp»** (у строки сборки) ведут к обновлению.
+- Версия установленного сервера определяется опросом `llama-server --version` по пути из настроек, поэтому корректна и для серверов в нестандартных папках; сохранённый при установке тег используется только если exe лежит в папке установки.
 
 ### Язык интерфейса
 
@@ -151,6 +164,7 @@ curl http://localhost:18080/v1/chat/completions \
 - Путь к каталогам установки llama.cpp
 - Размер окна приложения
 - Настройки звуков
+- Выбранная тема оформления (светлая/тёмная)
 - Дополнительные аргументы
 - Все параметры llama-server
 
@@ -166,7 +180,7 @@ curl http://localhost:18080/v1/chat/completions \
 
 ---
 
-# LLM Server Controller v0.1.6
+# LLM Server Controller v0.1.8
 
 GUI application for launching and managing a local LLM (Large Language Model) server based on llama.cpp.
 
@@ -174,11 +188,14 @@ GUI application for launching and managing a local LLM (Large Language Model) se
 
 - **Start / Stop / Restart** llama-server with a graphical interface
 - **Built-in installation** of llama.cpp — automatically downloads binaries from GitHub Releases
-- **Parameter configuration** for llama-server across 12 parameter groups (context, GPU, memory, CPU, generation, etc.)
+- **Parameter configuration** for llama-server across 18 parameter groups (context, GPU, memory, CPU, generation, etc.)
 - **Russian / English interface**
 - **Real-time logs** — view, copy, save, and clear
 - **Export/Import settings** to/from a JSON file
 - **GPU device list** via the `--list-devices` command
+- **Dark and light themes** — switch via the **View** menu, choice is saved
+- **Update checking** — for new app versions and llama.cpp builds («Latest version» badge and **Help → Check for updates**)
+- **Server version indicator** — the installed build is always shown next to the «Server» field (detected live via `llama-server --version`, works for custom folders too)
 - **Auto-open server in browser** after model loads
 
 ## System Requirements
@@ -225,7 +242,7 @@ Launch the application and in the menu **File → Install llama.cpp**, select th
 
 | Field | Description |
 |-------|-------------|
-| **Server** | Path to `llama-server.exe` (Windows) / `llama-server` (Linux). The "Browse" button opens a file selection dialog. The "Download llama.cpp" button triggers built-in installation. The "Devices" button lists GPUs via `--list-devices`. |
+| **Server** | Path to `llama-server.exe` (Windows) / `llama-server` (Linux). The "Browse" button opens a file selection dialog. The "Download llama.cpp" button triggers built-in installation. The **installed version** is shown on the right (refreshes when the file changes, including manual path edits). Below it — a **«Latest version»** badge when updates are available. The GPU list moved to **File → Devices** (`--list-devices`). |
 | **Model** | Path to the `.gguf` model file. The "Browse" button opens a file selection dialog. |
 | **Window Size** | Width and height of the application window in pixels (e.g., 1200×800). |
 | **Commands** | Additional arguments for llama-server (e.g.: `--temp 0.7 --top-k 40`). Quotes support grouped arguments. |
@@ -272,8 +289,18 @@ llama-server parameters are organized into categories, switchable in the side pa
 | **File → Import** | Loads settings from an external JSON file |
 | **File → Export** | Saves current settings to a selected JSON file |
 | **File → Install llama.cpp** | Triggers built-in installation |
+| **File → Devices** | Lists GPUs/CPUs via `--list-devices` |
 | **Parameters** | Switch between parameter groups |
 | **Sounds** | Enable/disable sound beeps on server load / stop |
+| **View** | Switches the light / dark theme |
+| **Help → Check for updates** | Checks for new app versions and llama.cpp builds |
+
+### Updates
+
+- On startup the app quietly checks for new versions: its own (GitHub Releases) and fresh llama.cpp builds.
+- When something is new, a **«Latest version: …»** badge appears in the path panel under the server version (click opens details).
+- The check dialog shows current and available versions; the **«Open releases»** button (next to the app row) and **«Install llama.cpp»** (next to the build row) lead to the update.
+- The installed server version is detected by running `llama-server --version` at the configured path, so it is correct for servers in custom folders too; the tag saved at install time is used only if the exe lives in the install folder.
 
 ### Interface Language
 
@@ -319,6 +346,7 @@ Settings are saved to a JSON file `llama_config.json` in `%APPDATA%\LLM_Server_C
 - llama.cpp installation directories
 - Application window size
 - Sound settings
+- Selected UI theme (light/dark)
 - Custom arguments
 - All llama-server parameters
 
