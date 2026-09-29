@@ -57,6 +57,10 @@ APP_VERSION = "0.1.8"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 4
+MAX_LOG_LINES = 5000
+LOG_TRIM_LINES = 1000
+STOP_GRACE_TIMEOUT = 5.0
+STOP_KILL_TIMEOUT = 5.0
 LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
 APP_RELEASES_URL = f"https://github.com/{APP_GITHUB_REPO}/releases"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
@@ -176,6 +180,7 @@ class LlamaServerGUI:
         self.enable_stopped_sound_var = tk.BooleanVar(value=self.config.get("sounds", {}).get("stopped", True))
         self.open_browser_on_load_var = tk.BooleanVar(value=self.config.get("open_browser_on_load", True))
         self.install_in_progress = False
+        self._restart_pending = False
         self.update_info = {
             "app_tag": None,
             "app_url": None,
@@ -1977,9 +1982,21 @@ class LlamaServerGUI:
         return self.parse_custom_args(raw)
 
     def append_log(self, text):
-        self.log_lines.append(text)
+        # Храним лог построчно с жёстким лимитом, иначе за долгую работу
+        # log_lines и виджет съедят всю память. Чистим пакетно: старые строки
+        # удаляются и из списка, и из виджета, счёт 1:1 (splitlines keepends).
+        if not text:
+            return
+        self.log_lines.extend(text.splitlines(keepends=True))
         self.log_area.insert(tk.END, text)
         self.log_area.see(tk.END)
+        overflow = len(self.log_lines) - MAX_LOG_LINES
+        if overflow >= LOG_TRIM_LINES:
+            del self.log_lines[:overflow]
+            try:
+                self.log_area.delete("1.0", f"{overflow + 1}.0")
+            except tk.TclError:
+                pass
 
     def log(self, text):
         self.root.after(0, lambda: self.append_log(text))
@@ -2029,17 +2046,28 @@ class LlamaServerGUI:
         except OSError as exc:
             messagebox.showerror(self.tr("msg_save_error"), str(exc))
 
-    def read_output(self):
-        for line in iter(self.process.stdout.readline, ''):
-            if not self.is_running:
+    def read_output(self, proc=None):
+        # Привязываемся к своему процессу локально: после рестарта
+        # self.process уже указывает на новый сервер, а этот поток
+        # дочитывает вывод старого и не должен трогать UI нового.
+        proc = proc if proc is not None else self.process
+        if proc is None or proc.stdout is None:
+            return
+        for line in iter(proc.stdout.readline, ''):
+            if not self.is_running or self.process is not proc:
                 break
             self.log(line)
             if not self.server_ready and "llama_server: model loaded" in line:
                 self.server_ready = True
                 self.root.after(0, self.set_ready_state)
 
-        self.process.wait()
-        exit_code = self.process.returncode
+        try:
+            proc.wait()
+        except (OSError, ValueError):
+            pass
+        if self.process is not proc:
+            return
+        exit_code = proc.returncode
 
         if self.manual_stop_requested:
             self.root.after(0, lambda: self.set_stopped_state(play_sound=True))
@@ -2050,6 +2078,9 @@ class LlamaServerGUI:
 
     def start_server(self):
         if self.is_running:
+            return
+        if self._restart_pending:
+            self.log(f"--- {self.tr('log_restarting')} ---\n")
             return
 
         exe_path = os.path.normpath(self.exe_entry.get().strip())
@@ -2098,28 +2129,92 @@ class LlamaServerGUI:
             self.status_label.config(text=self.tr("status_loading"), fg="#ff9800")
             self.start_loading_blink()
             self.log(f"--- {self.tr('log_start_server')} ---\n{self.tr('log_command')} {' '.join(full_cmd)}\n\n")
-            threading.Thread(target=self.read_output, daemon=True).start()
+            threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
 
         except Exception as e:
             messagebox.showerror(self.tr("err_start"), str(e))
 
+    def _terminate_process(self, proc):
+        """Мягкая остановка; возвращает False если процесс уже мёртв."""
+        if proc is None:
+            return False
+        try:
+            proc.terminate()
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+
+    def _reap_process(self, proc, after=None):
+        """Ждём завершения (terminate -> wait -> kill -> wait), зомби не оставляем.
+
+        Работает в фоновом потоке, UI не блокирует. Колбэк after вызывается
+        в потоке UI уже после гарантированного освобождения порта.
+        """
+        if proc is None:
+            if after is not None:
+                self._run_on_ui_thread(after)
+            return
+        try:
+            proc.wait(timeout=STOP_GRACE_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                proc.wait(timeout=STOP_KILL_TIMEOUT)
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                pass
+        except (OSError, ValueError):
+            pass
+        for stream in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            try:
+                if stream is not None:
+                    stream.close()
+            except (OSError, ValueError):
+                pass
+        if after is not None:
+            self._run_on_ui_thread(after)
+
+    def _run_on_ui_thread(self, callback):
+        try:
+            if self.root.winfo_exists():
+                self.root.after(0, callback)
+        except tk.TclError:
+            pass
+
     def stop_server(self, log_message=True):
-        if self.process and self.is_running:
-            self.manual_stop_requested = True
-            self.is_running = False
-            self.process.terminate()
-            self.set_stopped_state(play_sound=False)
-            if log_message:
-                self.log(f"\n--- {self.tr('log_force_stopped')} ---\n")
+        proc = self.process
+        if proc is None or not self.is_running:
+            return
+        self.manual_stop_requested = True
+        self.is_running = False
+        self._terminate_process(proc)
+        self.set_stopped_state(play_sound=False)
+        if log_message:
+            self.log(f"\n--- {self.tr('log_force_stopped')} ---\n")
+        threading.Thread(target=self._reap_process, args=(proc,), daemon=True).start()
 
     def restart_server(self):
         if not self.is_running:
             self.start_server()
             return
+        if self._restart_pending:
+            return
 
+        proc = self.process
         self.log(f"\n--- {self.tr('log_restarting')} ---\n")
-        self.stop_server(log_message=False)
-        self.root.after(500, self.start_server)
+        self.manual_stop_requested = True
+        self.is_running = False
+        self._restart_pending = True
+        self._terminate_process(proc)
+        self.set_stopped_state(play_sound=False)
+        threading.Thread(target=self._reap_process, args=(proc, self._start_after_reap), daemon=True).start()
+
+    def _start_after_reap(self):
+        """Запуск нового сервера строго после смерти старого (порт свободен)."""
+        self._restart_pending = False
+        self.start_server()
 
     def get_server_url(self):
         host = self.get_param_value("--host") or "localhost"
@@ -2166,9 +2261,13 @@ class LlamaServerGUI:
     def on_close(self):
         if self.is_running:
             if messagebox.askokcancel(self.tr("msg_exit"), self.tr("msg_exit_confirm")):
+                proc = self.process
                 self.stop_server()
                 self._save_config_safely()
                 self.root.destroy()
+                # Окно уже закрыто — можно блокирующе дождаться процесса,
+                # чтобы не оставить сироту, держащую порт.
+                self._reap_process(proc)
         else:
             self._save_config_safely()
             self.root.destroy()
