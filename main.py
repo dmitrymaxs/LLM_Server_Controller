@@ -142,6 +142,59 @@ def get_user_config_path():
     return os.path.join(get_user_config_dir(), CONFIG_FILE)
 
 
+class StatusBadge(tk.Canvas):
+    """Circular status badge widget for server status.
+
+    Colors:
+        - working: green  (server running and ready)
+        - not_working: blue (server stopped)
+        - starting: yellow (server starting/loading)
+    """
+
+    STATUS_COLORS = {
+        "working": "#4CAF50",
+        "not_working": "#2196F3",
+        "starting": "#FF9800",
+    }
+
+    def __init__(self, parent, width=24, height=24, status="starting", **kwargs):
+        super().__init__(parent, width=width, height=height, **kwargs)
+        self.width = width
+        self.height = height
+        self._status = status
+        self._draw_badge()
+
+    def set_status(self, status):
+        """Update badge status and color."""
+        if status not in self.STATUS_COLORS:
+            status = "starting"
+        self._status = status
+        self._draw_badge()
+
+    def _draw_badge(self):
+        color = self.STATUS_COLORS.get(self._status, "#999999")
+        outer_radius = max(3, min(self.width, self.height) // 4)
+        self.create_oval(
+            (self.width - 1) / 2 - outer_radius,
+            (self.height - 1) / 2 - outer_radius,
+            (self.width - 1) / 2 + outer_radius,
+            (self.height - 1) / 2 + outer_radius,
+            fill=color,
+            outline="white",
+            width=1,
+        )
+        inner_radius = max(2, min(self.width, self.height) // 6)
+        self.create_oval(
+            (self.width - 1) / 2 - inner_radius,
+            (self.height - 1) / 2 - inner_radius,
+            (self.width - 1) / 2 + inner_radius,
+            (self.height - 1) / 2 + inner_radius,
+            fill=color,
+            outline="white",
+            width=1,
+        )
+
+
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
@@ -190,6 +243,7 @@ class LlamaServerGUI:
             "llama_current": "",
         }
         self.update_badge = None
+        self.badge = None
         self._exe_edit_job = None
 
         self.apply_window_geometry()
@@ -499,6 +553,23 @@ class LlamaServerGUI:
             self.install_llama_btn.config(state=tk.DISABLED, text=self.tr("btn_download_llama_installing"))
         else:
             self.install_llama_btn.config(state=tk.NORMAL, text=self.tr("btn_download_llama"))
+        self._update_badge_status()
+
+    def _update_badge_status(self):
+        """Updates the circular badge color based on server state.
+
+        - working (green): is_running and server_ready
+        - starting (yellow): is_running and not server_ready
+        - not_working (blue): not is_running
+        """
+        if self.is_running and self.server_ready:
+            status = "working"
+        elif self.is_running and not self.server_ready:
+            status = "starting"
+        else:
+            status = "not_working"
+        if getattr(self, "badge", None) is not None:
+            self.badge.set_status(status)
 
     # --- Проверка обновлений (приложение + сборки llama.cpp) ---
     def check_updates(self, auto=False):
@@ -1040,7 +1111,14 @@ class LlamaServerGUI:
         path_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
         self.path_frame = path_frame
 
-        tk.Label(path_frame, text=self.tr("label_server")).grid(row=0, column=0, sticky=tk.W, pady=2)
+        server_label_badge_frame = tk.Frame(path_frame, padx=2, pady=2)
+        server_label_badge_frame.grid(row=0, column=0, sticky=tk.W, pady=2)
+
+        label_server = tk.Label(server_label_badge_frame, text=self.tr("label_server"), font=("Arial", 10, "bold"))
+        self.badge = StatusBadge(server_label_badge_frame, width=24, height=24, status="starting")
+        label_server.pack(side=tk.LEFT, padx=2)
+        self.badge.pack(side=tk.LEFT, padx=2)
+
         self.exe_entry = tk.Entry(path_frame)
         self.exe_entry.grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
         self.exe_entry.bind("<KeyRelease>", self._on_exe_entry_edited)
@@ -1782,6 +1860,7 @@ class LlamaServerGUI:
     def set_loading_error_state(self):
         self.stop_loading_blink()
         self.status_label.config(text=self.tr("status_load_error"), fg="#b00020")
+        self._update_badge_status()
 
     def import_settings(self):
         file_path = filedialog.askopenfilename(
@@ -2059,6 +2138,7 @@ class LlamaServerGUI:
             self.log(line)
             if not self.server_ready and "llama_server: model loaded" in line:
                 self.server_ready = True
+                self._update_badge_status()
                 self.root.after(0, self.set_ready_state)
 
         try:
@@ -2128,6 +2208,7 @@ class LlamaServerGUI:
             self.restart_btn.config(state=tk.NORMAL)
             self.status_label.config(text=self.tr("status_loading"), fg="#ff9800")
             self.start_loading_blink()
+            self._update_badge_status()
             self.log(f"--- {self.tr('log_start_server')} ---\n{self.tr('log_command')} {' '.join(full_cmd)}\n\n")
             threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
 
@@ -2189,6 +2270,7 @@ class LlamaServerGUI:
             return
         self.manual_stop_requested = True
         self.is_running = False
+        self._update_badge_status()
         self._terminate_process(proc)
         self.set_stopped_state(play_sound=False)
         if log_message:
@@ -2206,6 +2288,7 @@ class LlamaServerGUI:
         self.log(f"\n--- {self.tr('log_restarting')} ---\n")
         self.manual_stop_requested = True
         self.is_running = False
+        self._update_badge_status()
         self._restart_pending = True
         self._terminate_process(proc)
         self.set_stopped_state(play_sound=False)
@@ -2237,6 +2320,7 @@ class LlamaServerGUI:
         if self.is_running:
             self.stop_loading_blink()
             self.status_label.config(text=self.tr("status_running"), fg="green")
+            self._update_badge_status()
             self.play_loaded_sound()
             if self.open_browser_on_load_var.get():
                 self.open_server_in_browser()
@@ -2245,6 +2329,7 @@ class LlamaServerGUI:
         self.stop_loading_blink()
         self.is_running = False
         self.server_ready = False
+        self._update_badge_status()
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.restart_btn.config(state=tk.DISABLED)
