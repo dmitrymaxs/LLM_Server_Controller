@@ -18,20 +18,124 @@ def _map(key: str, ru: str, en: str) -> dict:
 
 TRANSLATIONS = {
     # --- Заголовок окна ---
-    "app_title": _map("app_title", "LLM Server Controller v.0.1.8", "LLM Server Controller v.0.1.8"),
+    "app_title": _map("app_title", "LLM Server Controller v.0.2.0", "LLM Server Controller v.0.2.0"),
 
     # --- Меню ---
     "menu_file": _map("menu_file", "Файл", "File"),
     "menu_params": _map("menu_params", "Параметры", "Parameters"),
     "menu_sounds": _map("menu_sounds", "Звуки", "Sounds"),
     "menu_view": _map("menu_view", "Вид", "View"),
+    "menu_terminal": _map("menu_terminal", "Терминал", "Terminal"),
     "theme_light": _map("theme_light", "Светлая тема", "Light theme"),
     "theme_dark": _map("theme_dark", "Тёмная тема", "Dark theme"),
+    "terminal_title": _map("terminal_title", " Терминал ", " Terminal "),
+    "terminal_clear": _map("terminal_clear", "Очистить", "Clear"),
+    "terminal_close": _map("terminal_close", "Закрыть", "Close"),
+    "terminal_new": _map("terminal_new", "Новая консоль", "New console"),
+    "terminal_focus": _map("terminal_focus", "Фокус", "Focus"),
+    "terminal_starting": _map("terminal_starting", "Запуск...", "Starting..."),
+    "terminal_not_running": _map("terminal_not_running", "Не запущена", "Not running"),
+    "terminal_embed_error": _map(
+        "terminal_embed_error",
+        "Не удалось встроить консоль: {error}",
+        "Failed to embed console: {error}",
+    ),
+    "terminal_hint": _map("terminal_hint", "Введите команду и нажмите Enter", "Type a command and press Enter"),
+    "terminal_send": _map("terminal_send", "Выполнить", "Run"),
+    "terminal_stop": _map("terminal_stop", "Стоп", "Stop"),
+    "terminal_stopped": _map("terminal_stopped", "--- Остановлено ---", "--- Stopped ---"),
+    "terminal_external": _map("terminal_external", "Консоль", "Console"),
+    "terminal_external_hint": _map(
+        "terminal_external_hint",
+        "Интерактивные программы (например pi) запускайте кнопкой «Консоль»",
+        "Run interactive programs (e.g. pi) via the 'Console' button",
+    ),
+    "terminal_external_error": _map(
+        "terminal_external_error",
+        "Не удалось открыть системную консоль: {error}",
+        "Failed to open system console: {error}",
+    ),
+
+    # --- Менеджер моделей (локальные + HuggingFace) ---
+    "menu_models": _map("menu_models", "Модели…", "Models…"),
+    "btn_models": _map("btn_models", "Модели", "Models"),
+    "title_models": _map("title_models", "Модели", "Models"),
+    "tab_local": _map("tab_local", "Локальные", "Local"),
+    "tab_hf": _map("tab_hf", "HuggingFace", "HuggingFace"),
+    "models_dir_label": _map("models_dir_label", "Папка моделей:", "Models folder:"),
+    "btn_refresh": _map("btn_refresh", "Обновить", "Refresh"),
+    "btn_use_model": _map("btn_use_model", "Использовать", "Use"),
+    "btn_reveal": _map("btn_reveal", "Открыть папку", "Open folder"),
+    "col_name": _map("col_name", "Файл", "File"),
+    "col_size": _map("col_size", "Размер", "Size"),
+    "col_model": _map("col_model", "Модель", "Model"),
+    "col_likes": _map("col_likes", "Лайки", "Likes"),
+    "col_downloads": _map("col_downloads", "Скачивания", "Downloads"),
+    "col_updated": _map("col_updated", "Обновлено", "Updated"),
+    "col_file": _map("col_file", "Файл", "File"),
+    "hf_search_label": _map("hf_search_label", "Поиск:", "Search:"),
+    "btn_search": _map("btn_search", "Найти", "Search"),
+    "hf_sort_label": _map("hf_sort_label", "Сортировка:", "Sort:"),
+    "hf_sort_likes": _map("hf_sort_likes", "По лайкам", "By likes"),
+    "hf_sort_downloads": _map("hf_sort_downloads", "По скачиваниям", "By downloads"),
+    "hf_sort_updated": _map("hf_sort_updated", "По обновлению", "By updated"),
+    "hf_limit_label": _map("hf_limit_label", "Лимит:", "Limit:"),
+    "hf_models_label": _map("hf_models_label", "Модели:", "Models:"),
+    "hf_files_label": _map("hf_files_label", "GGUF-файлы:", "GGUF files:"),
+    "btn_download": _map("btn_download", "Скачать", "Download"),
+    "models_no_dir": _map("models_no_dir", "Выберите папку моделей.", "Select a models folder."),
+    "models_empty": _map("models_empty", "В папке нет .gguf файлов.", "No .gguf files in the folder."),
+    "models_found": _map("models_found", "Найдено: {n}", "Found: {n}"),
+    "msg_model_set": _map("msg_model_set", "Модель установлена:\n{path}", "Model set:\n{path}"),
+    "msg_no_file_selected": _map("msg_no_file_selected", "Выберите файл.", "Select a file."),
+    "hf_enter_query": _map("hf_enter_query", "Введите запрос для поиска.", "Enter a search query."),
+    "hf_searching": _map("hf_searching", "Поиск...", "Searching..."),
+    "hf_no_results": _map("hf_no_results", "Ничего не найдено.", "No results."),
+    "hf_found": _map("hf_found", "Найдено моделей: {n}", "Models found: {n}"),
+    "hf_error": _map("hf_error", "Ошибка HuggingFace: {error}", "HuggingFace error: {error}"),
+    "hf_loading_files": _map("hf_loading_files", "Загрузка файлов...", "Loading files..."),
+    "hf_no_gguf": _map("hf_no_gguf", "GGUF-файлы не найдены.", "No GGUF files found."),
+    "hf_files_ready": _map("hf_files_ready", "Файлов: {n}", "Files: {n}"),
+    "dl_exists": _map(
+        "dl_exists",
+        "Файл уже существует. Перезаписать?\n{path}",
+        "File already exists. Overwrite?\n{path}",
+    ),
+    "dl_done": _map("dl_done", "Скачано:\n{path}", "Downloaded:\n{path}"),
+    "dl_cancelled": _map("dl_cancelled", "Скачивание отменено.", "Download cancelled."),
+    "dl_error": _map("dl_error", "Ошибка скачивания: {error}", "Download error: {error}"),
+    "dl_use_after": _map(
+        "dl_use_after",
+        "Использовать скачанную модель как текущую?",
+        "Use the downloaded model as current?",
+    ),
+    "dl_choose_dir": _map("dl_choose_dir", "Выберите папку для скачивания.", "Select a download folder."),
     "menu_help": _map("menu_help", "Справка", "Help"),
 
     "menu_import": _map("menu_import", "Импорт", "Import"),
     "menu_export": _map("menu_export", "Экспорт", "Export"),
     "menu_install_llama": _map("menu_install_llama", "Установить llama.cpp", "Install llama.cpp"),
+    "menu_install_pi": _map("menu_install_pi", "Установить pi-агента", "Install pi agent"),
+    "msg_pi_install_confirm": _map(
+        "msg_pi_install_confirm",
+        "Загрузить и запустить установщик pi-агента?\n\nБудет выполнена команда:\n{command}\n\nУстановщик откроется в отдельном окне PowerShell.",
+        "Download and run the pi agent installer?\n\nThe following command will be executed:\n{command}\n\nThe installer will open in a separate PowerShell window.",
+    ),
+    "msg_pi_install_already_running": _map(
+        "msg_pi_install_already_running",
+        "Установщик pi-агента уже запущен.",
+        "The pi agent installer is already running.",
+    ),
+    "msg_pi_unsupported": _map(
+        "msg_pi_unsupported",
+        "Установка pi-агента этой командой поддерживается только на Windows. Установите pi вручную: {command}",
+        "Installing the pi agent with this command is only supported on Windows. Install pi manually: {command}",
+    ),
+    "log_pi_install": _map(
+        "log_pi_install",
+        "Запуск установщика pi-агента в отдельном окне PowerShell: {command}",
+        "Starting pi agent installer in a separate PowerShell window: {command}",
+    ),
     "menu_exit": _map("menu_exit", "Выход", "Exit"),
     "menu_help_help": _map("menu_help_help", "Справка", "Help"),
     "menu_about": _map("menu_about", "О программе", "About"),
@@ -391,6 +495,40 @@ TRANSLATIONS = {
         "Не удалось загрузить список Linux-сборок с GitHub ({error}). Используется запасной список.",
         "Failed to load the Linux build list from GitHub ({error}). A fallback list is used.",
     ),
+
+    # --- Чат (правая панель) ---
+    "chat_title": _map("chat_title", " Чат ", " Chat "),
+    "chat_session": _map("chat_session", "Сессия:", "Session:"),
+    "chat_new": _map("chat_new", "Новый", "New"),
+    "chat_delete": _map("chat_delete", "Удалить", "Delete"),
+    "chat_send": _map("chat_send", "Отправить", "Send"),
+    "chat_stop": _map("chat_stop", "Стоп", "Stop"),
+    "chat_attach": _map("chat_attach", "📎", "📎"),
+    "chat_agent_mode": _map("chat_agent_mode", "Агент", "Agent"),
+    "chat_mcp": _map("chat_mcp", "MCP", "MCP"),
+    "chat_clear": _map("chat_clear", "Очистить", "Clear"),
+    "chat_input_hint": _map("chat_input_hint", "Сообщение... (Enter — отправить, Shift+Enter — новая строка)", "Message... (Enter — send, Shift+Enter — newline)"),
+    "chat_needs_server": _map("chat_needs_server", "Запустите сервер, чтобы пользоваться чатом.", "Start the server to use chat."),
+    "chat_thinking": _map("chat_thinking", "Печатает…", "Typing…"),
+    "chat_tool_call": _map("chat_tool_call", "🔧 Вызов: {name}", "🔧 Call: {name}"),
+    "chat_tool_result": _map("chat_tool_result", "↩ Результат ({name}): {preview}", "↩ Result ({name}): {preview}"),
+    "chat_error": _map("chat_error", "Ошибка чата: {error}", "Chat error: {error}"),
+    "chat_attach_too_big": _map("chat_attach_too_big", "Файл слишком большой (>200 КБ текста пропущен): {name}", "File too large (>200KB text skipped): {name}"),
+    "chat_mcp_title": _map("chat_mcp_title", "MCP-серверы", "MCP servers"),
+    "chat_mcp_hint": _map("chat_mcp_hint", "Команда запуска stdio-сервера, напр.: python -m my_server", "Stdio server launch command, e.g.: python -m my_server"),
+    "chat_mcp_name": _map("chat_mcp_name", "Имя", "Name"),
+    "chat_mcp_command": _map("chat_mcp_command", "Команда", "Command"),
+    "chat_mcp_args": _map("chat_mcp_args", "Аргументы", "Args"),
+    "chat_mcp_add": _map("chat_mcp_add", "Добавить", "Add"),
+    "chat_mcp_remove": _map("chat_mcp_remove", "Удалить", "Remove"),
+    "chat_mcp_connect": _map("chat_mcp_connect", "Подключить", "Connect"),
+    "chat_mcp_disconnect": _map("chat_mcp_disconnect", "Отключить", "Disconnect"),
+    "chat_mcp_status_on": _map("chat_mcp_status_on", "● подключён", "● connected"),
+    "chat_mcp_status_off": _map("chat_mcp_status_off", "○ отключён", "○ disconnected"),
+    "chat_mcp_tools": _map("chat_mcp_tools", "Инструменты: {count}", "Tools: {count}"),
+    "chat_mcp_error": _map("chat_mcp_error", "MCP ошибка: {error}", "MCP error: {error}"),
+    "chat_session_deleted": _map("chat_session_deleted", "Сессия удалена.", "Session deleted."),
+    "chat_agent_hint": _map("chat_agent_hint", "Агент: модель может вызывать локальные инструменты (чтение файлов) и MCP.", "Agent: model can call local tools (file reading) and MCP."),
 }
 
 
@@ -520,7 +658,7 @@ HELP_TEXT_RU = """LLM Server Controller — справка
 Эти аргументы добавляются в конец команды запуска сервера.
 
 Описание параметров запуска:
-Слева — список категорий, справа — поля выбранной группы (4 колонки).
+Слева — список категорий, справа — поля выбранной группы (3 колонки).
 Переключение: клик в списке или меню «Параметры». Разделитель между параметрами
 и логами можно перетаскивать для изменения высоты панелей.
 
@@ -593,7 +731,7 @@ with spaces are wrapped in double quotes. Example:
 These arguments are appended to the end of the server launch command.
 
 Launch parameters:
-On the left — list of categories, on the right — fields of the selected group (4 columns).
+On the left — list of categories, on the right — fields of the selected group (3 columns).
 Switching: click in the list or via the "Parameters" menu. The divider between parameters
 and logs can be dragged to change the panel heights.
 
