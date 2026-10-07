@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag"
+        description: "Release tag (e.g. 0.2.0 or v0.2.0)"
         required: true
         type: string
 
@@ -17,17 +17,27 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+      - name: Normalize tag
+        id: tag_info
+        shell: bash
+        run: |
+          RAW_TAG="${{ inputs.tag }}"
+          CLEAN_TAG="${RAW_TAG#v}"
+          
+          echo "TAG_WITH_V=v${CLEAN_TAG}" >> "$GITHUB_OUTPUT"
+          echo "TAG_CLEAN=${CLEAN_TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Find Windows and Linux workflow runs
         id: runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG_WITH_V: ${{ steps.tag_info.outputs.TAG_WITH_V }}
           REPO: ${{ github.repository }}
         run: |
-          echo "Looking for successful builds for tag: $TAG"
+          echo "Looking for successful builds for tag: $TAG_WITH_V"
 
           SHA=$(gh api \
-            "repos/$REPO/git/ref/tags/$TAG" \
+            "repos/$REPO/git/ref/tags/$TAG_WITH_V" \
             --jq '.object.sha')
 
           echo "Tag commit: $SHA"
@@ -53,12 +63,12 @@ jobs:
             | head -n 1)
 
           if [ -z "$WINDOWS_RUN" ]; then
-            echo "ERROR: Windows build not found for $TAG"
+            echo "ERROR: Windows build not found for $TAG_WITH_V"
             exit 1
           fi
 
           if [ -z "$LINUX_RUN" ]; then
-            echo "ERROR: Linux build not found for $TAG"
+            echo "ERROR: Linux build not found for $TAG_WITH_V"
             exit 1
           fi
 
@@ -69,7 +79,7 @@ jobs:
           echo "LINUX_RUN=$LINUX_RUN" >> "$GITHUB_OUTPUT"
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
           name: LLMServerController-Windows
           path: release/windows
@@ -77,9 +87,9 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download Linux artifact
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v4
         with:
-          name: LLMServerController-Linux-${{ inputs.tag }}
+          name: LLMServerController-Linux-v${{ steps.tag_info.outputs.TAG_CLEAN }}
           path: release/linux
           run-id: ${{ steps.runs.outputs.LINUX_RUN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -95,11 +105,11 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG_WITH_V: ${{ steps.tag_info.outputs.TAG_WITH_V }}
         run: |
-          gh release create "$TAG" \
+          gh release create "$TAG_WITH_V" \
             --repo "${{ github.repository }}" \
-            --title "LLM Server Controller $TAG" \
+            --title "LLM Server Controller $TAG_WITH_V" \
             --generate-notes \
             release/windows/* \
             release/linux/*

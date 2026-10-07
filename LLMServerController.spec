@@ -3,6 +3,60 @@
 import os
 from glob import glob
 
+# Импортируем классы PyInstaller для работы с версией Windows
+from PyInstaller.utils.win32.versioninfo import (
+    VSVersionInfo,
+    FixedFileInfo,
+    StringFileInfo,
+    StringTable,
+    StringStruct,
+    VarFileInfo,
+    VarStruct,
+)
+
+# ==============================================================================
+# УКАЖИТЕ ВЕРСИЮ ЗДЕСЬ
+# ==============================================================================
+APP_VERSION = '0.2.0'
+COPYRIGHT = '© 2026 Dmitry Maksimov'
+# ==============================================================================
+
+# Преобразуем '0.2.0' в кортеж чисел (0, 2, 0, 0) для структуры Windows
+version_tuple = tuple(map(int, APP_VERSION.split('.')))
+if len(version_tuple) == 3:
+    version_tuple += (0,)
+
+# Формируем объект метаданных версии для Windows
+version_info = VSVersionInfo(
+    ffi=FixedFileInfo(
+        filevers=version_tuple,
+        prodvers=version_tuple,
+        mask=0x3F,
+        flags=0x0,
+        OS=0x40004,
+        fileType=0x1,
+        subtype=0x0,
+        date=(0, 0),
+    ),
+    kids=[
+        StringFileInfo([
+            StringTable(
+                '040904B0',
+                [
+                    StringStruct('FileVersion', APP_VERSION),
+                    StringStruct('ProductVersion', APP_VERSION),
+                    StringStruct('FileDescription', 'LLM Server Controller'),
+                    StringStruct('InternalName', 'LLMServerController'),
+                    StringStruct('OriginalFilename', 'LLMServerController.exe'),
+                    StringStruct('ProductName', 'LLM Server Controller'),
+					StringStruct('LegalCopyright', COPYRIGHT),
+                ],
+            )
+        ]),
+        VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+    ],
+)
+
 project_dir = os.path.abspath(os.getcwd())
 icon_dir = os.path.join(project_dir, 'icon')
 icon_png_candidates = [
@@ -64,4 +118,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=icon_ico,
+    version=version_info,  # <-- Передаем сгенерированный объект версии
 )
