@@ -107,6 +107,7 @@ GUI-приложение для запуска и управления лока�
 ### Терминал (Вид → Терминал)
 
 - Правая панель «Терминал» — встроенная настоящая консоль ОС, а не эмуляция через pipe: на Windows окно `cmd.exe` встраивается в панель (интерактивные TUI-программы, например `pi`, работают прямо в панели), на Linux используется `xterm -into`.
+- В Linux для работы терминала требуется пакет `xterm`: если он не установлен, доустановите его самостоятельно, например `sudo apt install xterm` (Ubuntu/Debian).
 - Кнопки заголовка: **«Новая консоль»** (перезапуск), **«Фокус»** (вернуть клавиатурный фокус), **«Закрыть»** (скрыть панель).
 - Консоль автоматически перезапускается при закрытии, растягивается при изменении размера панели; видимость панели сохраняется в конфиге (`terminal_visible`).
 
@@ -310,6 +311,7 @@ llama-server parameters are organized into categories, switchable in the side pa
 ### Terminal (View → Terminal)
 
 - The «Terminal» panel on the right is a built-in real OS console, not a pipe emulation: on Windows the `cmd.exe` window is embedded into the panel (interactive TUI programs such as `pi` work right inside the panel), on Linux `xterm -into` is used.
+- On Linux the terminal requires the `xterm` package: if it is not installed, install it manually, e.g. `sudo apt install xterm` (Ubuntu/Debian).
 - Header buttons: **«New console»** (respawn), **«Focus»** (return keyboard focus), **«Close»** (hide the panel).
 - The console auto-respawns when closed and stretches on panel resize; panel visibility is saved to the config (`terminal_visible`).
 
