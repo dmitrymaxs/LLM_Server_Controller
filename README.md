@@ -1,3 +1,6 @@
+[Русский](#ru) | [English](#en)
+
+<a id="ru"></a>
 # LLM Server Controller v0.2.0
 
 GUI-приложение для запуска и управления локальным LLM (Large Language Model) сервером на базе llama.cpp.
@@ -202,6 +205,7 @@ curl http://localhost:18080/v1/chat/completions \
 
 ---
 
+<a id="en"></a>
 # LLM Server Controller v0.2.0
 
 GUI application for launching and managing a local LLM (Large Language Model) server based on llama.cpp.
