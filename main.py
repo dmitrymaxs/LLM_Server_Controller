@@ -1,7 +1,9 @@
 import sys
 import os
+import glob
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -29,8 +31,14 @@ from tkinter import messagebox, filedialog, ttk
 from params_config import (
     PARAM_GROUPS,
     BACKEND_DEVICE_KEYS,
+    CLI_PARAM_GROUPS,
+    BENCH_PARAM_GROUPS,
     build_default_params,
+    build_default_cli_params,
+    build_default_bench_params,
     normalize_loaded_params,
+    normalize_loaded_cli_params,
+    normalize_loaded_bench_params,
 )
 from releases import (
     fetch_windows_assets,
@@ -60,12 +68,13 @@ APP_ICON_PNG_CANDIDATES = [
     "16x16.png",
     "icon48x48.png",
 ]
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 APP_AUTHOR = "Dmitry Maksimov"
 APP_LICENSE = "MIT"
 PARAM_GRID_COLUMNS = 3
 MAX_LOG_LINES = 5000
 LOG_TRIM_LINES = 1000
+DEBUG_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llmsc_debug.log")
 STOP_GRACE_TIMEOUT = 5.0
 STOP_KILL_TIMEOUT = 5.0
 LLAMA_CPP_RELEASES_URL = "https://github.com/ggml-org/llama.cpp/releases"
@@ -74,6 +83,8 @@ PI_AGENT_INSTALL_COMMAND = 'powershell -c "irm https://pi.dev/install.ps1 | iex"
 APP_RELEASES_URL = f"https://github.com/{APP_GITHUB_REPO}/releases"
 LLAMA_CPP_INSTALL_DIRNAME = "llama.cpp"
 LLAMA_SERVER_FILENAME = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+LLAMA_CLI_FILENAME = "llama-cli.exe" if sys.platform == "win32" else "llama-cli"
+LLAMA_BENCH_FILENAME = "llama-bench.exe" if sys.platform == "win32" else "llama-bench"
 LLAMA_CPP_RECOMMENDED_LABEL = "Windows x64 (Vulkan)" if sys.platform == "win32" else "Linux x64 (Vulkan)"
 THEME_LIGHT = "light"
 THEME_DARK = "dark"
@@ -271,6 +282,8 @@ _WIN32_SWP_NOSIZE = 0x0001
 _WIN32_SWP_NOMOVE = 0x0002
 _WIN32_SWP_NOZORDER = 0x0004
 _WIN32_SWP_FRAMECHANGED = 0x0020
+_WIN32_SWP_SHOWWINDOW = 0x0040
+_WIN32_HWND_TOP = 0
 _WIN32_SW_HIDE = 0
 _WIN32_SW_SHOW = 5
 
@@ -338,6 +351,8 @@ def _win32_api():
     user32.IsWindow.restype = wintypes.BOOL
     user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(_WinRect)]
     user32.GetClientRect.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(_WinRect)]
+    user32.GetWindowRect.restype = wintypes.BOOL
     user32.CallWindowProcW.argtypes = [
         ctypes.c_void_p, wintypes.HWND, ctypes.c_uint, wintypes.WPARAM, wintypes.LPARAM,
     ]
@@ -385,65 +400,173 @@ def _win32_wndproc_type():
     )
 
 
-def _win32_process_children(root_pid, _depth=0):
+def _win32_process_snapshot():
+    """Снапшот процессов Windows: {pid: (ppid, имя_образа в нижнем регистре)}."""
+    kernel32 = ctypes.windll.kernel32
+    TH32CS_SNAPPROCESS = 0x00000002
+
+    class _ProcessEntry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.CHAR * 260),
+        ]
+
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
+    kernel32.Process32First.restype = wintypes.BOOL
+    kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
+    kernel32.Process32Next.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if int(snap) == -1:
+        return {}
+    result = {}
+    try:
+        entry = _ProcessEntry()
+        entry.dwSize = ctypes.sizeof(_ProcessEntry)
+        ok = kernel32.Process32First(snap, ctypes.byref(entry))
+        while ok:
+            name = bytes(entry.szExeFile).split(b"\x00", 1)[0].decode(
+                "utf-8", "replace").lower()
+            result[int(entry.th32ProcessID)] = (int(entry.th32ParentProcessID), name)
+            ok = kernel32.Process32Next(snap, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snap)
+    return result
+
+
+def _win32_descendant_exists(root_pid, exe_name, snap=None):
+    """Проверяет, есть ли среди потомков root_pid процесс с именем образа."""
+    if not exe_name:
+        return False
+    try:
+        if snap is None:
+            snap = _win32_process_snapshot()
+        target = str(exe_name).lower()
+        children = {}
+        for pid, (ppid, _name) in snap.items():
+            children.setdefault(ppid, []).append(pid)
+        frontier = [int(root_pid)]
+        seen = {int(root_pid)}
+        while frontier:
+            current = frontier.pop()
+            for child in children.get(current, []):
+                if child in seen:
+                    continue
+                seen.add(child)
+                info = snap.get(child)
+                if info is None:
+                    continue
+                if info[1] == target:
+                    return True
+                frontier.append(child)
+    except Exception:
+        return False
+    return False
+
+
+def _win32_process_children(root_pid, snap=None):
     """Возвращает множество PID: сам процесс и все его потомки.
 
     Нужно, потому что окно консоли принадлежит conhost.exe или его
     дочернему cmd.exe, а не напрямую запущенному нами процессу.
     """
-    try:
-        kernel32 = ctypes.windll.kernel32
-        TH32CS_SNAPPROCESS = 0x00000002
-
-        class _ProcessEntry(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD),
-                ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
-                ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", wintypes.LONG),
-                ("dwFlags", wintypes.DWORD),
-                ("szExeFile", wintypes.CHAR * 260),
-            ]
-
-        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        kernel32.Process32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
-        kernel32.Process32First.restype = wintypes.BOOL
-        kernel32.Process32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry)]
-        kernel32.Process32Next.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.CloseHandle.restype = wintypes.BOOL
-
-        snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        if int(snap) == -1:
-            return {int(root_pid)}
-        try:
-            children = {}
-            entry = _ProcessEntry()
-            entry.dwSize = ctypes.sizeof(_ProcessEntry)
-            ok = kernel32.Process32First(snap, ctypes.byref(entry))
-            while ok:
-                children.setdefault(int(entry.th32ParentProcessID), []).append(
-                    int(entry.th32ProcessID)
-                )
-                ok = kernel32.Process32Next(snap, ctypes.byref(entry))
-        finally:
-            kernel32.CloseHandle(snap)
-        result = {int(root_pid)}
-        frontier = [int(root_pid)]
-        while frontier:
-            current = frontier.pop()
-            for child in children.get(current, []):
-                if child not in result:
-                    result.add(child)
-                    frontier.append(child)
-        return result
-    except Exception:
+    if snap is None:
+        snap = _win32_process_snapshot()
+    if not snap:
         return {int(root_pid)}
+    children = {}
+    for _pid, (ppid, _name) in snap.items():
+        children.setdefault(ppid, []).append(_pid)
+    result = {int(root_pid)}
+    frontier = [int(root_pid)]
+    while frontier:
+        current = frontier.pop()
+        for child in children.get(current, []):
+            if child not in result:
+                result.add(child)
+                frontier.append(child)
+    return result
+
+
+def _posix_descendant_exists(root_pid, exe_name):
+    """Linux: есть ли среди потомков root_pid процесс с именем образа (из /proc)."""
+    if not exe_name:
+        return False
+    try:
+        target = str(exe_name).lower()[:15]
+        procs = {}
+        for entry_name in os.listdir("/proc"):
+            if not entry_name.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry_name}/stat", "rb") as handle:
+                    text = handle.read().decode("utf-8", "replace")
+            except OSError:
+                continue
+            start = text.find("(")
+            end = text.rfind(")")
+            if start < 0 or end <= start:
+                continue
+            comm = text[start + 1:end].lower()
+            fields = text[end + 1:].split()
+            if len(fields) < 2:
+                continue
+            try:
+                procs[int(entry_name)] = (int(fields[1]), comm)
+            except ValueError:
+                continue
+        children = {}
+        for pid, (ppid, _comm) in procs.items():
+            children.setdefault(ppid, []).append(pid)
+        frontier = [int(root_pid)]
+        seen = {int(root_pid)}
+        while frontier:
+            for child in children.get(frontier.pop(), []):
+                if child in seen:
+                    continue
+                seen.add(child)
+                info = procs.get(child)
+                if info is None:
+                    continue
+                if info[1] == target:
+                    return True
+                frontier.append(child)
+    except Exception:
+        return False
+    return False
+
+
+def _win32_console_info(hwnd):
+    """Возвращает (visible, owner_pid, rect) для HWND либо None."""
+    try:
+        api = _win32_api()
+        user32 = api["user32"]
+        if not user32.IsWindow(hwnd):
+            return None
+        owner = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        rect = _WinRect()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return None
+        return (
+            bool(user32.IsWindowVisible(hwnd)),
+            int(owner.value),
+            (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)),
+        )
+    except Exception:
+        return None
 
 
 def _win32_find_console_window(pid, proc=None, timeout=8.0):
@@ -570,7 +693,13 @@ def _win32_embed_console_window(host_hwnd, console_hwnd):
 
 
 def _win32_fit_console_to_host(host_hwnd, console_hwnd):
-    """Растягивает встроенную консоль на клиентскую область хоста."""
+    """Растягивает встроенную консоль на клиентскую область хоста.
+
+    После MoveWindow окно принудительно показывается поверх (TOP +
+    SHOWWINDOW): conhost иногда остаётся невидимым/нулевого размера, если
+    встраивание произошло до финальной геометрии панели — тогда консоль
+    появлялась только после ручного перетаскивания разделителя.
+    """
     api = _win32_api()
     user32 = api["user32"]
     rect = _WinRect()
@@ -584,9 +713,21 @@ def _win32_fit_console_to_host(host_hwnd, console_hwnd):
     if width <= 0 or height <= 0:
         return False
     try:
-        return bool(user32.MoveWindow(console_hwnd, 0, 0, width, height, True))
+        moved = bool(user32.MoveWindow(console_hwnd, 0, 0, width, height, True))
     except Exception:
         return False
+    try:
+        user32.SetWindowPos(
+            console_hwnd, _WIN32_HWND_TOP, 0, 0, 0, 0,
+            _WIN32_SWP_NOMOVE | _WIN32_SWP_NOSIZE | _WIN32_SWP_SHOWWINDOW,
+        )
+    except Exception:
+        pass
+    try:
+        user32.ShowWindow(console_hwnd, _WIN32_SW_SHOW)
+    except Exception:
+        pass
+    return moved
 
 
 class _HfDownloadCancelled(Exception):
@@ -596,7 +737,7 @@ class _HfDownloadCancelled(Exception):
 class LlamaServerGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("LLM Server Controller v.0.2.0")
+        self.root.title("LLM Server Controller v.0.2.1")
         self.root.geometry("1000x900")
         self.apply_app_icon()
 
@@ -610,7 +751,44 @@ class LlamaServerGUI:
         self.current_release_tag = None
 
         self.default_params = build_default_params()
+        self.default_cli_params = build_default_cli_params()
+        self.default_bench_params = build_default_bench_params()
         self.default_config = self.get_default_config()
+        # llama-cli в правом терминале (интерактивная сессия, не сервер).
+        self.cli_running = False
+        self.cli_cmd = []
+        self.cli_dialog = None
+        self.cli_exe_entry = None
+        self.cli_model_entry = None
+        self.cli_custom_entry = None
+        self.cli_preview = None
+        self.cli_param_widgets = {}
+        self._cli_starting = False
+        # llama-bench в правом терминале (пакетный замер, не сервер).
+        # Отдельное окно (Toplevel) со своими min/max/close.
+        self.bench_running = False
+        self.bench_cmd = []
+        self.bench_dialog = None
+        self.bench_exe_entry = None
+        self.bench_model_entry = None
+        self.bench_custom_entry = None
+        self.bench_preview = None
+        self.bench_param_widgets = {}
+        self._bench_starting = False
+        self._bench_proc_seen = False
+        self._bench_watch_deadline = 0.0
+        self._bench_queue_mode = False
+        self._bench_queue_path = ""
+        self._cli_proc_seen = False
+        self._cli_watch_deadline = 0.0
+        self.bench_save_check_var = None
+        self.bench_save_dir_entry = None
+        self.bench_save_name_entry = None
+        self._bench_name_auto = True
+        self.bench_last_save_path = ""
+        self.bench_history_paths = []
+        self.bench_ext_window_var = None
+        self.bench_ext_proc = None
 
         self.config = self.load_config()
         self.i18n = I18n(self.config.get("language", DEFAULT_LANGUAGE))
@@ -797,6 +975,8 @@ class LlamaServerGUI:
         file_menu.add_command(label=self.tr("menu_install_llama"), command=self.install_llama_cpp)
         file_menu.add_command(label=self.tr("menu_install_pi"), command=self.install_pi_agent)
         file_menu.add_command(label=self.tr("btn_devices"), command=self.list_devices)
+        file_menu.add_command(label=self.tr("menu_cli"), command=self.open_cli_dialog)
+        file_menu.add_command(label=self.tr("menu_bench"), command=self.open_bench_dialog)
         file_menu.add_command(label=self.tr("menu_models"), command=self.open_models_browser)
         file_menu.add_separator()
         file_menu.add_command(label=self.tr("menu_exit"), command=self.on_close)
@@ -1089,6 +1269,15 @@ class LlamaServerGUI:
             "theme": THEME_LIGHT,
             "terminal_visible": False,
             "models_dir": "",
+            "cli_path": "",
+            "cli_custom_args": "",
+            "cli_params": self.default_cli_params.copy(),
+            "bench_path": "",
+            "bench_custom_args": "",
+            "bench_params": self.default_bench_params.copy(),
+            "bench_save_enabled": False,
+            "bench_save_dir": "",
+            "bench_ext_window": True,
             "params": self.default_params.copy()
         }
 
@@ -1134,6 +1323,31 @@ class LlamaServerGUI:
             config["theme"] = loaded_theme
         loaded_custom_args = loaded_config.get("custom_args", "")
         config["custom_args"] = loaded_custom_args if isinstance(loaded_custom_args, str) else str(loaded_custom_args or "")
+        config["cli_path"] = os.path.normpath(str(loaded_config.get("cli_path", "") or "")) if str(loaded_config.get("cli_path", "") or "") else ""
+        loaded_cli_custom = loaded_config.get("cli_custom_args", "")
+        config["cli_custom_args"] = loaded_cli_custom if isinstance(loaded_cli_custom, str) else str(loaded_cli_custom or "")
+        loaded_cli_params = normalize_loaded_cli_params(loaded_config.get("cli_params", {}))
+        for param, default_value in self.default_cli_params.items():
+            if param in loaded_cli_params:
+                value = loaded_cli_params[param]
+                if isinstance(default_value, bool):
+                    config["cli_params"][param] = bool(value)
+                else:
+                    config["cli_params"][param] = str(value)
+        config["bench_path"] = os.path.normpath(str(loaded_config.get("bench_path", "") or "")) if str(loaded_config.get("bench_path", "") or "") else ""
+        loaded_bench_custom = loaded_config.get("bench_custom_args", "")
+        config["bench_custom_args"] = loaded_bench_custom if isinstance(loaded_bench_custom, str) else str(loaded_bench_custom or "")
+        loaded_bench_params = normalize_loaded_bench_params(loaded_config.get("bench_params", {}))
+        for param, default_value in self.default_bench_params.items():
+            if param in loaded_bench_params:
+                value = loaded_bench_params[param]
+                if isinstance(default_value, bool):
+                    config["bench_params"][param] = bool(value)
+                else:
+                    config["bench_params"][param] = str(value)
+        config["bench_save_enabled"] = bool(loaded_config.get("bench_save_enabled", False))
+        config["bench_save_dir"] = str(loaded_config.get("bench_save_dir", "") or "")
+        config["bench_ext_window"] = bool(loaded_config.get("bench_ext_window", False))
 
         loaded_params = normalize_loaded_params(loaded_config.get("params", {}))
         for param, default_value in self.default_params.items():
@@ -1202,6 +1416,15 @@ class LlamaServerGUI:
             "theme": self.theme_var.get() if hasattr(self, "theme_var") else self.config.get("theme", THEME_LIGHT),
             "terminal_visible": self.terminal_visible_var.get() if hasattr(self, "terminal_visible_var") else self.config.get("terminal_visible", False),
             "models_dir": getattr(self, "models_dir", "") or "",
+            "cli_path": os.path.normpath(str(self.config.get("cli_path", "") or "")) if str(self.config.get("cli_path", "") or "") else "",
+            "cli_custom_args": str(self.config.get("cli_custom_args", "") or ""),
+            "cli_params": dict(self.config.get("cli_params", {}) or {}),
+            "bench_path": os.path.normpath(str(self.config.get("bench_path", "") or "")) if str(self.config.get("bench_path", "") or "") else "",
+            "bench_custom_args": str(self.config.get("bench_custom_args", "") or ""),
+            "bench_params": dict(self.config.get("bench_params", {}) or {}),
+            "bench_save_enabled": bool(self.config.get("bench_save_enabled", False)),
+            "bench_save_dir": str(self.config.get("bench_save_dir", "") or ""),
+            "bench_ext_window": bool(self.config.get("bench_ext_window", False)),
             "params": params
         }
 
@@ -2046,6 +2269,24 @@ class LlamaServerGUI:
         self.param_entries = {}
         self.param_group_frames = {}
         self.param_group_meta = {}
+        # Диалог CLI — Toplevel, уничтожается вместе с остальными виджетами.
+        self.cli_dialog = None
+        # Окно bench — отдельный Toplevel, уничтожается так же.
+        self.bench_dialog = None
+        self.cli_exe_entry = None
+        self.cli_model_entry = None
+        self.cli_custom_entry = None
+        self.cli_preview = None
+        self.cli_param_widgets = {}
+        self.bench_exe_entry = None
+        self.bench_model_entry = None
+        self.bench_custom_entry = None
+        self.bench_preview = None
+        self.bench_param_widgets = {}
+        self.bench_save_check_var = None
+        self.bench_save_dir_entry = None
+        self.bench_save_name_entry = None
+        self.bench_ext_window_var = None
 
         # Встроенная консоль привязана к HWND хоста: при уничтожении виджетов
         # её окно умрёт вместе с родителем, поэтому процесс гасим заранее,
@@ -2182,6 +2423,8 @@ class LlamaServerGUI:
         tk.Button(toolbar, text=self.tr("btn_export"), command=self.export_settings).pack(side=tk.LEFT, padx=2)
         tk.Button(toolbar, text=self.tr("btn_reset"), command=self.reset_settings).pack(side=tk.LEFT, padx=2)
         tk.Button(toolbar, text=self.tr("btn_models"), command=self.open_models_browser).pack(side=tk.LEFT, padx=2)
+        tk.Button(toolbar, text=self.tr("btn_cli"), command=self.open_cli_dialog).pack(side=tk.LEFT, padx=2)
+        tk.Button(toolbar, text=self.tr("btn_bench"), command=self.open_bench_dialog).pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=2)
 
@@ -2479,6 +2722,13 @@ class LlamaServerGUI:
 
     def _terminal_ensure(self):
         """Гарантирует запущенную встроенную консоль (запускает при нужды)."""
+        if getattr(self, "_cli_starting", False):
+            return
+        if getattr(self, "_bench_starting", False):
+            # Иначе show_terminal() из run_bench_in_terminal стартует пустую
+            # консоль параллельно с бенчем: она встраивается второй и
+            # перекрывает окно с выводом замера.
+            return
         if self._terminal_is_alive():
             self._terminal_resize_embedded()
             self._terminal_focus_embedded()
@@ -2568,14 +2818,116 @@ class LlamaServerGUI:
                 self._terminal_kill_proc(proc)
                 return
             self.terminal_hwnd = hwnd
-            self._terminal_set_status("cmd.exe")
+            if getattr(self, "cli_running", False):
+                self._terminal_set_status(self.tr("cli_status_running"))
+            else:
+                self._terminal_set_status("cmd.exe")
         else:
             self.terminal_hwnd = None
-            self._terminal_set_status("shell")
+            if getattr(self, "cli_running", False):
+                self._terminal_set_status(self.tr("cli_status_running"))
+            else:
+                self._terminal_set_status("shell")
         self.terminal_proc = proc
         self._terminal_spawn_failures = 0
+        self._terminal_log_embed_info(host_hwnd if sys.platform == "win32" else 0, hwnd)
         self._terminal_focus_embedded()
+        self._terminal_schedule_refits()
         self._terminal_start_watchdog()
+        # Отложенная проверка встраивания: панель финализирует геометрию
+        # позже, свежий HWND помогает при «пустом» терминале.
+        for delay in (3000, 10000):
+            try:
+                self.root.after(delay, lambda g=gen: self._terminal_verify_embedded(g))
+            except tk.TclError:
+                break
+
+    def _terminal_log_embed_info(self, host_hwnd, hwnd):
+        """Диагностика встраивания: размер консоли/панели и видимость в лог.
+
+        Пишется только для сессий cli/bench (не для чистой консоли),
+        чтобы по логу было видно, встроилось ли окно корректно.
+        """
+        if sys.platform != "win32":
+            return
+        try:
+            session = (
+                getattr(self, "cli_running", False)
+                or getattr(self, "bench_running", False)
+                or getattr(self, "_cli_starting", False)
+                or getattr(self, "_bench_starting", False)
+            )
+            if not session:
+                return
+            info = _win32_console_info(hwnd)
+            host_size = None
+            try:
+                hr = _WinRect()
+                if _win32_api()["user32"].GetClientRect(host_hwnd, ctypes.byref(hr)):
+                    host_size = f"{int(hr.right - hr.left)}x{int(hr.bottom - hr.top)}"
+            except Exception:
+                host_size = None
+            try:
+                parent_ok = _hwnd_to_int(_win32_api()["user32"].GetParent(hwnd)) == int(host_hwnd)
+            except Exception:
+                parent_ok = False
+            if info is None:
+                self.log(f"terminal: no console window (host={host_size} parent={int(bool(parent_ok))})\n")
+            else:
+                visible, _owner, (left, top, right, bottom) = info
+                self.log(
+                    f"terminal: console {right - left}x{bottom - top}@{left},{top}"
+                    f" visible={int(bool(visible))} parent={int(bool(parent_ok))} host={host_size}\n"
+                )
+        except Exception:
+            pass
+
+    def _terminal_verify_embedded(self, gen):
+        """Проверяет встроенное окно консоли и переподключает при проблемах.
+
+        Случаи пустого терминала: встроен чужой/мёртвый HWND, окно стало
+        невидимым или схлопнулось в ноль. Тогда ищем актуальное окно
+        текущего процесса и встраиваем заново.
+        """
+        if gen != getattr(self, "terminal_gen", 0):
+            return
+        if sys.platform != "win32":
+            return
+        proc = getattr(self, "terminal_proc", None)
+        hwnd = getattr(self, "terminal_hwnd", None)
+        if proc is None or not hwnd:
+            return
+        try:
+            if proc.poll() is not None:
+                return
+        except Exception:
+            return
+        try:
+            tree = _win32_process_children(proc.pid)
+        except Exception:
+            tree = set()
+        info = _win32_console_info(hwnd)
+        ok = False
+        if info is not None:
+            visible, owner, (left, top, right, bottom) = info
+            ok = bool(visible) and owner in tree and (right - left) > 0 and (bottom - top) > 0
+        if ok:
+            self._terminal_resize_embedded()
+            return
+        new_hwnd = _win32_find_console_window(proc.pid, proc=proc, timeout=4.0)
+        if not new_hwnd:
+            return
+        try:
+            host_hwnd = int(self.terminal_host.winfo_id())
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            return
+        try:
+            _win32_embed_console_window(host_hwnd, new_hwnd)
+        except Exception:
+            return
+        self.terminal_hwnd = new_hwnd
+        self._terminal_resize_embedded()
+        self._terminal_focus_embedded()
 
     def _terminal_on_host_configure(self, _event=None):
         job = getattr(self, "_terminal_resize_job", None)
@@ -2609,12 +2961,39 @@ class LlamaServerGUI:
         try:
             if not host.winfo_exists():
                 return
+            # Синхронизируем геометрию Tk перед замером: иначе после
+            # добавления панели/перемещения разделителя GetClientRect
+            # отдаёт устаревший (часто нулевой) прямоугольник.
+            try:
+                host.update_idletasks()
+            except (tk.TclError, AttributeError):
+                pass
             host_hwnd = int(host.winfo_id())
         except (tk.TclError, TypeError, ValueError, AttributeError):
             return
         try:
             _win32_fit_console_to_host(host_hwnd, hwnd)
         except Exception:
+            pass
+
+    def _terminal_schedule_refits(self):
+        """Несколько отложенных рефитов после встраивания консоли.
+
+        Геометрия панели финализируется позже самого встраивания
+        (панель только добавлена, разделитель ставится через ~150 мс),
+        поэтому одного фита недостаточно — без этого консоль видна
+        только после ручного перетаскивания разделителя.
+        """
+        if sys.platform != "win32":
+            return
+        for delay in (150, 500, 1500):
+            try:
+                self.root.after(delay, self._terminal_resize_embedded)
+            except tk.TclError:
+                break
+        try:
+            self.root.after(300, self._terminal_focus_embedded)
+        except tk.TclError:
             pass
 
     def _terminal_focus_embedded(self, _event=None):
@@ -2764,11 +3143,26 @@ class LlamaServerGUI:
         """Кнопка «Новая»: убивает текущую консоль и запускает свежую."""
         self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
         self._terminal_spawn_failures = 0
+        self.cli_running = False
+        self.cli_cmd = []
+        self._cli_starting = False
+        self.bench_running = False
+        self.bench_cmd = []
+        self._bench_starting = False
         proc = getattr(self, "terminal_proc", None)
         self.terminal_proc = None
         self.terminal_hwnd = None
         self._terminal_kill_proc(proc)
+        self._bench_kill_external()
         self._terminal_ensure()
+        try:
+            self._cli_refresh_dialog_state()
+        except AttributeError:
+            pass
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
 
     def _terminal_shutdown(self):
         """Гасит консоль перед уничтожением виджетов (rebuild/выход).
@@ -2783,6 +3177,13 @@ class LlamaServerGUI:
         proc = getattr(self, "terminal_proc", None)
         self.terminal_proc = None
         self.terminal_hwnd = None
+        self.cli_running = False
+        self.cli_cmd = []
+        self._cli_starting = False
+        self.bench_running = False
+        self.bench_cmd = []
+        self._bench_starting = False
+        self._bench_kill_external()
         self._terminal_kill_proc(proc)
 
     def _terminal_start_watchdog(self):
@@ -2801,6 +3202,74 @@ class LlamaServerGUI:
                 pass
             self._terminal_watchdog_job = None
 
+    def _watchdog_watch_sessions(self):
+        """Проверяет в UI-потоке: жив ли рабочий процесс cli/bench в консоли.
+
+        Дублирует фоновый монитор-child: если llama-cli.exe/llama-bench.exe
+        исчез из консоли (приглашение уже видно), сбрасываем состояние
+        сессии, не дожидаясь закрытия самой консоли (cmd /K остаётся жить).
+        """
+        proc = getattr(self, "terminal_proc", None)
+        if proc is None:
+            return
+        try:
+            if proc.poll() is not None:
+                return
+        except Exception:
+            return
+        if getattr(self, "bench_running", False) and not getattr(self, "_bench_starting", False):
+            if self._watch_session_child("bench") == "finished":
+                self._bench_session_finished(getattr(self, "terminal_gen", 0), proc, False)
+        if getattr(self, "cli_running", False) and not getattr(self, "_cli_starting", False):
+            if self._watch_session_child("cli") == "finished":
+                self._cli_session_finished(getattr(self, "terminal_gen", 0))
+
+    def _watch_session_child(self, kind):
+        """Ищет потомка-процесс консоли. 'running' — найден, 'finished' — пропал."""
+        if kind == "bench":
+            seen_attr = "_bench_proc_seen"
+            deadline_attr = "_bench_watch_deadline"
+            exe = os.path.basename(getattr(self, "bench_cmd", [""])[0] or "")
+        else:
+            seen_attr = "_cli_proc_seen"
+            deadline_attr = "_cli_watch_deadline"
+            exe = os.path.basename(getattr(self, "cli_cmd", [""])[0] or "")
+        if not exe:
+            return "running"
+        proc = getattr(self, "terminal_proc", None)
+        if proc is None:
+            return "running"
+        if sys.platform == "win32":
+            try:
+                found = _win32_descendant_exists(proc.pid, exe)
+            except Exception:
+                found = None
+        else:
+            try:
+                found = _posix_descendant_exists(proc.pid, exe)
+            except Exception:
+                found = None
+        if found is None:
+            self.log("monitor: ошибка снимка процессов, повторяю\n")
+            return "running"
+        if found:
+            if not getattr(self, seen_attr, False):
+                setattr(self, seen_attr, True)
+                self.log(f"monitor: {exe} активен\n")
+            setattr(self, seen_attr + "_miss", 0)
+            return "running"
+        seen = bool(getattr(self, seen_attr, False))
+        if seen or time.time() >= getattr(self, deadline_attr, 0.0) - 0.5:
+            miss_attr = seen_attr + "_miss"
+            misses = getattr(self, miss_attr, 0)
+            if misses < 2:
+                setattr(self, miss_attr, misses + 1)
+                return "running"
+            setattr(self, miss_attr, 0)
+            self.log(f"monitor: {exe} в консоли больше нет\n")
+            return "finished"
+        return "running"
+
     def _terminal_watchdog_tick(self):
         """Следит за консолью: если процесс умер (например, набрали exit),
         запускает свежую консоль."""
@@ -2812,12 +3281,1564 @@ class LlamaServerGUI:
         if not visible:
             return
         if self._terminal_is_alive():
+            # Держим встроенное окно приклеенным к панели: conhost может
+            # сам менять свой размер/видимость — без периодического фита
+            # консоль «пропадает» до следующего ресайза вручную.
+            self._watchdog_watch_sessions()
+            self._terminal_resize_embedded()
             self._terminal_start_watchdog()
             return
+        if getattr(self, "cli_running", False):
+            self.cli_running = False
+            self.cli_cmd = []
+            self.log(f"{self.tr('cli_finished_log')}\n")
+            try:
+                self._cli_refresh_dialog_state()
+            except AttributeError:
+                pass
+        if getattr(self, "bench_running", False):
+            self.bench_running = False
+            self.bench_cmd = []
+            self.log(f"{self.tr('bench_finished_log')}\n")
+            try:
+                self._bench_refresh_dialog_state()
+            except AttributeError:
+                pass
         if getattr(self, "_terminal_spawn_failures", 0) >= 3:
             self._terminal_set_status(self.tr("terminal_embed_error", error=""))
             return
         self._terminal_set_status(self.tr("terminal_not_running"))
+        self._terminal_ensure()
+
+    # ================= llama-cli (запуск в правом терминале) =================
+    def find_llama_cli(self, explicit="", server_exe=""):
+        """Возвращает путь к llama-cli.exe либо ''.
+
+        Приоритет: явное поле cli_path -> каталог llama-server ->
+        install.directory -> cwd.
+        """
+        explicit = (explicit or "").strip()
+        if explicit and os.path.isfile(explicit):
+            return os.path.normpath(explicit)
+        candidates = []
+        for base in (server_exe, self.config.get("exe_path", "") or ""):
+            base = (base or "").strip()
+            if base and os.path.isfile(base):
+                candidates.append(os.path.dirname(os.path.normpath(base)))
+        install_dir = str(self.config.get("install", {}).get("directory", "") or "")
+        if install_dir and os.path.isdir(install_dir):
+            candidates.append(os.path.normpath(install_dir))
+        try:
+            candidates.append(os.getcwd())
+        except OSError:
+            pass
+        seen = set()
+        for directory in candidates:
+            if not directory or directory in seen:
+                continue
+            seen.add(directory)
+            for root_dir, _dirs, files in os.walk(directory):
+                if LLAMA_CLI_FILENAME in files:
+                    return os.path.normpath(os.path.join(root_dir, LLAMA_CLI_FILENAME))
+                # Не углубляемся слишком далеко от корня установки.
+                if os.path.abspath(root_dir).count(os.sep) - os.path.abspath(directory).count(os.sep) > 3:
+                    del _dirs[:]
+        return ""
+
+    def _cli_dialog_alive(self):
+        window = getattr(self, "cli_dialog", None)
+        try:
+            return window is not None and window.winfo_exists()
+        except tk.TclError:
+            return False
+
+    def open_cli_dialog(self):
+        """Окно редактора параметров llama-cli с preview и кнопками запуска."""
+        if self._cli_dialog_alive():
+            try:
+                self.cli_dialog.lift()
+                self.cli_dialog.focus_set()
+            except tk.TclError:
+                pass
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.tr("cli_title"))
+        dialog.geometry("720x640")
+        dialog.transient(self.root)
+        self.cli_dialog = dialog
+        self.cli_param_widgets = {}
+
+        top = tk.Frame(dialog)
+        top.pack(fill=tk.X, padx=10, pady=(10, 4))
+        tk.Label(top, text=self.tr("cli_exe_label"), font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.cli_exe_entry = tk.Entry(top, font=("Consolas", 9))
+        self.cli_exe_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
+        detected = self.find_llama_cli(
+            self.config.get("cli_path", ""),
+            self.exe_entry.get().strip() if hasattr(self, "exe_entry") else "",
+        )
+        self.cli_exe_entry.insert(0, self.config.get("cli_path", "") or detected)
+        tk.Button(top, text=self.tr("btn_browse"), font=("Arial", 8),
+                  command=self._cli_browse_exe).pack(side=tk.LEFT, padx=2)
+
+        model_row = tk.Frame(dialog)
+        model_row.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(model_row, text=self.tr("cli_model_label"), font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.cli_model_entry = tk.Entry(model_row, font=("Consolas", 9))
+        self.cli_model_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
+        current_model = ""
+        try:
+            current_model = self.model_entry.get().strip()
+        except (tk.TclError, AttributeError):
+            current_model = str(self.config.get("model_path", "") or "")
+        self.cli_model_entry.insert(0, current_model)
+        tk.Button(model_row, text=self.tr("btn_browse"), font=("Arial", 8),
+                  command=self._cli_browse_model).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(dialog, text=self.tr("cli_params_label"), font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10)
+        canvas_frame = tk.Frame(dialog)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=2)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0, yscrollcommand=scrollbar.set)
+        scrollbar.config(command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        host = tk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=host, anchor=tk.NW)
+        host.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfig(canvas_window, width=event.width))
+        saved = self.config.get("cli_params", {}) or {}
+        for group in CLI_PARAM_GROUPS:
+            tk.Label(host, text=self.i18n.group_title(group["id"]),
+                     font=("Segoe UI", 10, "bold"), anchor=tk.W).pack(fill=tk.X, pady=(6, 0))
+            if group.get("hint"):
+                tk.Label(host, text=self.i18n.group_hint(group["id"]) or group.get("hint", ""),
+                         font=("Arial", 8), fg="#777777", anchor=tk.W).pack(fill=tk.X)
+            grid = tk.Frame(host)
+            grid.pack(fill=tk.X)
+            row, col = 0, 0
+            for spec in group["params"]:
+                param = spec["key"]
+                default = spec["default"]
+                value = saved.get(param, default if param not in saved else default)
+                if param in saved:
+                    value = saved[param]
+                cell = tk.Frame(grid, padx=6, pady=3)
+                cell.grid(row=row, column=col, sticky=tk.NW)
+                tk.Label(cell, text=param, font=("Consolas", 9, "bold"), anchor=tk.W).pack(fill=tk.X)
+                if isinstance(default, bool):
+                    var = tk.BooleanVar(value=bool(value))
+                    tk.Checkbutton(cell, text=self.tr("chk_enable"), variable=var,
+                                   font=("Arial", 9)).pack(anchor=tk.W)
+                    var.trace_add("write", lambda *_a: self._cli_refresh_preview())
+                    self.cli_param_widgets[param] = var
+                elif spec.get("choices"):
+                    choices = list(spec["choices"])
+                    if str(value) not in choices:
+                        choices.insert(0, str(value))
+                    var = tk.StringVar(value=str(value))
+                    combo = ttk.Combobox(
+                        cell, textvariable=var, values=choices,
+                        state="readonly", width=20, font=("Consolas", 9),
+                    )
+                    combo.pack(anchor=tk.W)
+                    var.trace_add("write", lambda *_a: self._cli_refresh_preview())
+                    self.cli_param_widgets[param] = var
+                else:
+                    ent = tk.Entry(cell, width=22, font=("Consolas", 9))
+                    ent.insert(0, str(value))
+                    ent.pack(anchor=tk.W)
+                    ent.bind("<KeyRelease>", lambda _e: self._cli_refresh_preview())
+                    self.cli_param_widgets[param] = ent
+                hint = self.i18n.param_hint(param, spec.get("hint", ""))
+                if hint:
+                    tk.Label(cell, text=hint, font=("Arial", 8), fg="#777777",
+                             wraplength=200, justify=tk.LEFT).pack(anchor=tk.W)
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+
+        custom_row = tk.Frame(dialog)
+        custom_row.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(custom_row, text=self.tr("cli_custom_label"), font=("Arial", 9)).pack(side=tk.LEFT)
+        self.cli_custom_entry = tk.Entry(custom_row, font=("Consolas", 9))
+        self.cli_custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        self.cli_custom_entry.insert(0, str(self.config.get("cli_custom_args", "") or ""))
+        self.cli_custom_entry.bind("<KeyRelease>", lambda _e: self._cli_refresh_preview())
+
+        tk.Label(dialog, text=self.tr("cli_preview_label"), font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10)
+        self.cli_preview = tk.Text(dialog, height=4, wrap=tk.WORD, font=("Consolas", 8))
+        self.cli_preview.pack(fill=tk.X, padx=10, pady=2)
+        self.cli_preview.config(state=tk.DISABLED)
+
+        btns = tk.Frame(dialog)
+        btns.pack(fill=tk.X, padx=10, pady=(4, 10))
+        self.cli_run_btn = tk.Button(btns, text=self.tr("cli_run"), command=self._cli_run_from_dialog)
+        self.cli_run_btn.pack(side=tk.LEFT, padx=2)
+        self.cli_stop_btn = tk.Button(btns, text=self.tr("cli_stop"), command=self.stop_cli_in_terminal)
+        self.cli_stop_btn.pack(side=tk.LEFT, padx=2)
+        tk.Button(btns, text=self.tr("btn_close"),
+                  command=dialog.destroy).pack(side=tk.RIGHT, padx=2)
+        dialog.bind("<Destroy>", lambda _e: self._cli_on_dialog_close())
+        self.cli_exe_entry.bind("<KeyRelease>", lambda _e: self._cli_refresh_preview())
+        self.cli_model_entry.bind("<KeyRelease>", lambda _e: self._cli_refresh_preview())
+        self._cli_refresh_preview()
+        self._cli_refresh_dialog_state()
+        self.apply_theme()
+
+    def _cli_on_dialog_close(self):
+        self.cli_dialog = None
+        self.cli_exe_entry = None
+        self.cli_model_entry = None
+        self.cli_custom_entry = None
+        self.cli_preview = None
+        self.cli_param_widgets = {}
+
+    def _cli_browse_exe(self):
+        if sys.platform == "win32":
+            title = self.tr("title_select_cli_win")
+            filetypes = [(self.tr("ft_executables_win"), "*.exe"), (self.tr("ft_all_files"), "*.*")]
+        else:
+            title = self.tr("title_select_cli_unix")
+            filetypes = [(self.tr("ft_executables_unix"), "*"), (self.tr("ft_all_files"), "*.*")]
+        path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        if path and self.cli_exe_entry is not None:
+            self.cli_exe_entry.delete(0, tk.END)
+            self.cli_exe_entry.insert(0, os.path.normpath(path))
+            self._cli_refresh_preview()
+
+    def _cli_browse_model(self):
+        path = filedialog.askopenfilename(
+            title=self.tr("title_select_model"),
+            filetypes=[(self.tr("ft_gguf"), "*.gguf"), (self.tr("ft_all_files"), "*.*")],
+        )
+        if path and self.cli_model_entry is not None:
+            self.cli_model_entry.delete(0, tk.END)
+            self.cli_model_entry.insert(0, os.path.normpath(path))
+            self._cli_refresh_preview()
+
+    def _cli_collect_dialog_state(self):
+        """Считывает диалог в (cli_exe, model, params dict, custom str)."""
+        cli_exe = ""
+        if self.cli_exe_entry is not None:
+            try:
+                cli_exe = os.path.normpath(self.cli_exe_entry.get().strip())
+            except tk.TclError:
+                cli_exe = ""
+        model = ""
+        if self.cli_model_entry is not None:
+            try:
+                model = os.path.normpath(self.cli_model_entry.get().strip())
+            except tk.TclError:
+                model = ""
+        params = {}
+        for param, widget in (self.cli_param_widgets or {}).items():
+            try:
+                if isinstance(widget, tk.BooleanVar):
+                    params[param] = widget.get()
+                else:
+                    params[param] = widget.get().strip()
+            except tk.TclError:
+                pass
+        custom = ""
+        if self.cli_custom_entry is not None:
+            try:
+                custom = self.cli_custom_entry.get().strip()
+            except tk.TclError:
+                custom = ""
+        return cli_exe, model, params, custom
+
+    def build_cli_command(self, cli_exe="", model="", params=None, custom=""):
+        """Строит argv llama-cli: [exe, -m, model] + params + custom."""
+        if params is None:
+            params = {}
+        cmd = [cli_exe, "-m", model]
+        for group in CLI_PARAM_GROUPS:
+            for spec in group["params"]:
+                param = spec["key"]
+                default = spec["default"]
+                if param not in params:
+                    continue
+                value = params[param]
+                if isinstance(default, bool):
+                    if bool(value):
+                        flag_value = spec.get("flag_value")
+                        if flag_value is not None and str(flag_value) != "":
+                            cmd.extend([param, str(flag_value)])
+                        else:
+                            cmd.append(param)
+                else:
+                    val = str(value or "").strip()
+                    if val:
+                        cmd.extend([param, val])
+        cmd.extend(self.parse_custom_args(custom))
+        return cmd
+
+    def format_cli_preview(self, cmd):
+        if not cmd or not cmd[0]:
+            return ""
+        try:
+            if sys.platform == "win32":
+                return subprocess.list2cmdline(cmd)
+            return shlex.join(cmd)
+        except Exception:
+            return " ".join(cmd)
+
+    def _cli_refresh_preview(self):
+        if not self._cli_dialog_alive() or self.cli_preview is None:
+            return
+        cli_exe, model, params, custom = self._cli_collect_dialog_state()
+        if not cli_exe:
+            try:
+                server = self.exe_entry.get().strip()
+            except (tk.TclError, AttributeError):
+                server = ""
+            cli_exe = self.find_llama_cli("", server)
+        cmd = self.build_cli_command(cli_exe or LLAMA_CLI_FILENAME, model or "<model.gguf>", params, custom)
+        text = self.format_cli_preview(cmd)
+        try:
+            self.cli_preview.config(state=tk.NORMAL)
+            self.cli_preview.delete("1.0", tk.END)
+            self.cli_preview.insert("1.0", text)
+            self.cli_preview.config(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def _cli_refresh_dialog_state(self):
+        running = bool(getattr(self, "cli_running", False)) or bool(
+            getattr(self, "_cli_starting", False))
+        for btn_name, enabled in (("cli_run_btn", not running), ("cli_stop_btn", running)):
+            btn = getattr(self, btn_name, None)
+            if btn is not None:
+                try:
+                    btn.config(state=tk.NORMAL if enabled else tk.DISABLED)
+                except tk.TclError:
+                    pass
+
+    def _cli_run_from_dialog(self):
+        cli_exe, model, params, custom = self._cli_collect_dialog_state()
+        if not cli_exe:
+            try:
+                server = self.exe_entry.get().strip()
+            except (tk.TclError, AttributeError):
+                server = ""
+            cli_exe = self.find_llama_cli("", server)
+        if not cli_exe or not os.path.isfile(cli_exe):
+            messagebox.showerror(self.tr("msg_error"),
+                                 self.tr("cli_not_found", exe=LLAMA_CLI_FILENAME))
+            return
+        if not model or not os.path.isfile(model):
+            messagebox.showerror(self.tr("msg_error"), self.tr("cli_no_model"))
+            return
+        if getattr(self, "cli_running", False):
+            if not messagebox.askyesno(self.tr("cli_title"), self.tr("cli_already_running")):
+                return
+        if getattr(self, "is_running", False):
+            if not messagebox.askyesno(self.tr("cli_title"), self.tr("cli_server_running_warn")):
+                return
+        # Сохраняем редактор в конфиг, чтобы параметры пережили перезапуск.
+        self.config["cli_path"] = cli_exe
+        self.config["cli_params"] = dict(params)
+        self.config["cli_custom_args"] = custom
+        try:
+            self.save_config()
+        except OSError as exc:
+            messagebox.showerror(self.tr("msg_save_error"), str(exc))
+            return
+        cmd = self.build_cli_command(cli_exe, model, params, custom)
+        self.run_cli_in_terminal(cmd)
+
+    def run_cli_in_terminal(self, cmd):
+        """Показывает терминал и запускает в нём llama-cli (интерактивно).
+
+        Консоль пересоздаётся с командой: Windows — conhost+cmd /K,
+        Linux — xterm -e. Предыдущая сессия (shell или CLI) завершается.
+        """
+        if not cmd:
+            return
+        # Инвалидируем возможный pending-спавн чистой консоли из show_terminal.
+        self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
+        self._cli_starting = True
+        # Сеансы взаимно исключающие: гасим остатки bench-состояния.
+        self._bench_kill_external()
+        self._bench_starting = False
+        self.bench_running = False
+        self.bench_cmd = []
+        self.bench_queue_mode_reset()
+        self._bench_refresh_dialog_state()
+        self._terminal_cancel_watchdog()
+        old_proc = getattr(self, "terminal_proc", None)
+        self.terminal_proc = None
+        self.terminal_hwnd = None
+        self._terminal_kill_proc(old_proc)
+        self._cli_refresh_dialog_state()
+        self.show_terminal(save=True)
+        self.log(f"--- {self.tr('cli_started_log')} ---\n{self.tr('log_command')} {self.format_cli_preview(cmd)}\n\n")
+        gen = getattr(self, "terminal_gen", 0)
+        try:
+            host_hwnd = int(self.terminal_host.winfo_id())
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            host_hwnd = 0
+        cwd = getattr(self, "terminal_cwd", "") or ""
+        if not isinstance(cwd, str) or not os.path.isdir(cwd):
+            cwd = os.path.expanduser("~")
+        self.cli_cmd = list(cmd)
+        threading.Thread(
+            target=self._cli_spawn_thread,
+            args=(gen, host_hwnd, cwd, list(cmd)),
+            daemon=True,
+        ).start()
+
+    def _cli_spawn_thread(self, gen, host_hwnd, cwd, cmd):
+        """Запуск консоли с llama-cli внутри (фон, без обращений к Tk)."""
+        try:
+            if sys.platform == "win32":
+                system_root = os.environ.get("SystemRoot", r"C:\Windows")
+                conhost = os.path.join(system_root, "System32", "conhost.exe")
+                if not os.path.exists(conhost):
+                    conhost = "conhost.exe"
+                cmdline = subprocess.list2cmdline(cmd)
+                proc = subprocess.Popen(
+                    [conhost, "cmd.exe", "/K", cmdline],
+                    cwd=cwd,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
+                )
+            else:
+                if shutil.which("xterm") is None:
+                    raise FileNotFoundError("xterm")
+                shell_cmd = shlex.join(cmd) + "; exec sh"
+                proc = subprocess.Popen(
+                    ["xterm", "-into", str(host_hwnd), "-e", "sh", "-c", shell_cmd],
+                    cwd=cwd,
+                )
+        except Exception as exc:
+            self.root.after(0, self._cli_spawn_failed, gen, str(exc))
+            return
+        hwnd = None
+        if sys.platform == "win32":
+            hwnd = _win32_find_console_window(proc.pid, proc=proc, timeout=8.0)
+        self.root.after(0, lambda: self._cli_finish_embed(gen, proc, hwnd))
+
+    def _cli_spawn_failed(self, gen, error):
+        if gen != getattr(self, "terminal_gen", 0):
+            return
+        self._cli_starting = False
+        self.cli_running = False
+        self.cli_cmd = []
+        self._terminal_spawn_failed(gen, error)
+        try:
+            self._cli_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def _cli_finish_embed(self, gen, proc, hwnd):
+        if gen != getattr(self, "terminal_gen", 0):
+            self._terminal_kill_proc(proc)
+            return
+        try:
+            dead = proc.poll() is not None
+        except Exception:
+            dead = True
+        if dead:
+            self._cli_starting = False
+            self.cli_running = False
+            self.cli_cmd = []
+            self._terminal_spawn_failed(gen, proc.args if hasattr(proc, "args") else "")
+            try:
+                self._cli_refresh_dialog_state()
+            except AttributeError:
+                pass
+            return
+        self.cli_running = True
+        self._cli_starting = False
+        self._terminal_spawn_failures = 0
+        self._cli_proc_seen = False
+        self._cli_watch_deadline = time.time() + 20.0
+        # Переиспользуем штатное встраивание окна консоли в панель.
+        self._terminal_finish_embed(gen, proc, hwnd)
+        exe_name = os.path.basename(getattr(self, "cli_cmd", [""])[0] or "")
+        self.log(f"monitor: слежу за {exe_name}\n")
+        threading.Thread(
+            target=self._child_monitor_thread,
+            args=(gen, proc, exe_name, False, "cli"),
+            daemon=True,
+        ).start()
+        try:
+            self._cli_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def stop_cli_in_terminal(self):
+        """Останавливает llama-cli и возвращает чистую консоль."""
+        if not getattr(self, "cli_running", False) and not getattr(self, "_cli_starting", False):
+            return
+        self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
+        self._cli_starting = False
+        self.cli_running = False
+        self.cli_cmd = []
+        self.bench_queue_mode_reset()
+        self._terminal_spawn_failures = 0
+        proc = getattr(self, "terminal_proc", None)
+        self.terminal_proc = None
+        self.terminal_hwnd = None
+        self._terminal_kill_proc(proc)
+        self.log(f"\n--- {self.tr('cli_stopped_log')} ---\n")
+        try:
+            self._cli_refresh_dialog_state()
+        except AttributeError:
+            pass
+        self._terminal_ensure()
+
+    # ================= llama-bench (отдельное окно) =================
+    def find_llama_bench(self, explicit="", server_exe=""):
+        """Возвращает путь к llama-bench либо ''.
+
+        Приоритет: явное поле bench_path -> каталог llama-server ->
+        install.directory -> cwd.
+        """
+        explicit = (explicit or "").strip()
+        if explicit and os.path.isfile(explicit):
+            return os.path.normpath(explicit)
+        candidates = []
+        for base in (server_exe, self.config.get("exe_path", "") or ""):
+            base = (base or "").strip()
+            if base and os.path.isfile(base):
+                candidates.append(os.path.dirname(os.path.normpath(base)))
+        install_dir = str(self.config.get("install", {}).get("directory", "") or "")
+        if install_dir and os.path.isdir(install_dir):
+            candidates.append(os.path.normpath(install_dir))
+        try:
+            candidates.append(os.getcwd())
+        except OSError:
+            pass
+        seen = set()
+        for directory in candidates:
+            if not directory or directory in seen:
+                continue
+            seen.add(directory)
+            for root_dir, _dirs, files in os.walk(directory):
+                if LLAMA_BENCH_FILENAME in files:
+                    return os.path.normpath(os.path.join(root_dir, LLAMA_BENCH_FILENAME))
+                if os.path.abspath(root_dir).count(os.sep) - os.path.abspath(directory).count(os.sep) > 3:
+                    del _dirs[:]
+        return ""
+
+    def _bench_dialog_alive(self):
+        window = getattr(self, "bench_dialog", None)
+        try:
+            return window is not None and window.winfo_exists()
+        except tk.TclError:
+            return False
+
+    def open_bench_dialog(self):
+        """Отдельное окно редактора llama-bench с preview и запуском.
+
+        Обычный Toplevel (не transient): есть кнопки свернуть /
+        развернуть / закрыть и отдельная запись в панели задач.
+        """
+        if self._bench_dialog_alive():
+            try:
+                self.bench_dialog.lift()
+                self.bench_dialog.focus_set()
+            except tk.TclError:
+                pass
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.tr("bench_title"))
+        dialog.geometry("720x640")
+        dialog.minsize(560, 420)
+        self.bench_dialog = dialog
+        self.bench_param_widgets = {}
+
+        top = tk.Frame(dialog)
+        top.pack(fill=tk.X, padx=10, pady=(10, 4))
+        tk.Label(top, text=self.tr("bench_exe_label"), font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.bench_exe_entry = tk.Entry(top, font=("Consolas", 9))
+        self.bench_exe_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
+        detected = self.find_llama_bench(
+            self.config.get("bench_path", ""),
+            self.exe_entry.get().strip() if hasattr(self, "exe_entry") else "",
+        )
+        self.bench_exe_entry.insert(0, self.config.get("bench_path", "") or detected)
+        tk.Button(top, text=self.tr("btn_browse"), font=("Arial", 8),
+                  command=self._bench_browse_exe).pack(side=tk.LEFT, padx=2)
+
+        model_row = tk.Frame(dialog)
+        model_row.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(model_row, text=self.tr("bench_model_label"), font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.bench_model_entry = tk.Entry(model_row, font=("Consolas", 9))
+        self.bench_model_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
+        current_model = ""
+        try:
+            current_model = self.model_entry.get().strip()
+        except (tk.TclError, AttributeError):
+            current_model = str(self.config.get("model_path", "") or "")
+        self.bench_model_entry.insert(0, current_model)
+        tk.Button(model_row, text=self.tr("btn_browse"), font=("Arial", 8),
+                  command=self._bench_browse_model).pack(side=tk.LEFT, padx=2)
+
+        tk.Label(dialog, text=self.tr("bench_params_label"), font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10)
+        canvas_frame = tk.Frame(dialog)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=2)
+        scrollbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
+        canvas = tk.Canvas(canvas_frame, highlightthickness=0, yscrollcommand=scrollbar.set)
+        scrollbar.config(command=canvas.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        host = tk.Frame(canvas)
+        canvas_window = canvas.create_window((0, 0), window=host, anchor=tk.NW)
+        host.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfig(canvas_window, width=event.width))
+        saved = self.config.get("bench_params", {}) or {}
+        for group in BENCH_PARAM_GROUPS:
+            tk.Label(host, text=self.i18n.group_title(group["id"]),
+                     font=("Segoe UI", 10, "bold"), anchor=tk.W).pack(fill=tk.X, pady=(6, 0))
+            if group.get("hint"):
+                tk.Label(host, text=self.i18n.group_hint(group["id"]) or group.get("hint", ""),
+                         font=("Arial", 8), fg="#777777", anchor=tk.W).pack(fill=tk.X)
+            grid = tk.Frame(host)
+            grid.pack(fill=tk.X)
+            row, col = 0, 0
+            for spec in group["params"]:
+                param = spec["key"]
+                default = spec["default"]
+                value = saved.get(param, default if param not in saved else default)
+                if param in saved:
+                    value = saved[param]
+                cell = tk.Frame(grid, padx=6, pady=3)
+                cell.grid(row=row, column=col, sticky=tk.NW)
+                tk.Label(cell, text=param, font=("Consolas", 9, "bold"), anchor=tk.W).pack(fill=tk.X)
+                if isinstance(default, bool):
+                    var = tk.BooleanVar(value=bool(value))
+                    tk.Checkbutton(cell, text=self.tr("chk_enable"), variable=var,
+                                   font=("Arial", 9)).pack(anchor=tk.W)
+                    var.trace_add("write", lambda *_a: self._bench_refresh_preview())
+                    self.bench_param_widgets[param] = var
+                elif spec.get("choices"):
+                    choices = list(spec["choices"])
+                    if str(value) not in choices:
+                        choices.insert(0, str(value))
+                    var = tk.StringVar(value=str(value))
+                    combo = ttk.Combobox(
+                        cell, textvariable=var, values=choices,
+                        state="readonly", width=20, font=("Consolas", 9),
+                    )
+                    combo.pack(anchor=tk.W)
+                    var.trace_add("write", lambda *_a: self._bench_refresh_preview())
+                    self.bench_param_widgets[param] = var
+                else:
+                    ent = tk.Entry(cell, width=22, font=("Consolas", 9))
+                    ent.insert(0, str(value))
+                    ent.pack(anchor=tk.W)
+                    ent.bind("<KeyRelease>", lambda _e: self._bench_refresh_preview())
+                    self.bench_param_widgets[param] = ent
+                hint = self.i18n.param_hint(param, spec.get("hint", ""))
+                if hint:
+                    tk.Label(cell, text=hint, font=("Arial", 8), fg="#777777",
+                             wraplength=200, justify=tk.LEFT).pack(anchor=tk.W)
+                col += 1
+                if col >= 3:
+                    col = 0
+                    row += 1
+
+        custom_row = tk.Frame(dialog)
+        custom_row.pack(fill=tk.X, padx=10, pady=2)
+        tk.Label(custom_row, text=self.tr("bench_custom_label"), font=("Arial", 9)).pack(side=tk.LEFT)
+        self.bench_custom_entry = tk.Entry(custom_row, font=("Consolas", 9))
+        self.bench_custom_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        self.bench_custom_entry.insert(0, str(self.config.get("bench_custom_args", "") or ""))
+        self.bench_custom_entry.bind("<KeyRelease>", lambda _e: self._bench_refresh_preview())
+
+        save_frame = tk.LabelFrame(dialog, text=self.tr("bench_save_title"), font=("Arial", 9, "bold"))
+        save_frame.pack(fill=tk.X, padx=10, pady=2)
+        self.bench_save_check_var = tk.BooleanVar(value=bool(self.config.get("bench_save_enabled", False)))
+        tk.Checkbutton(save_frame, text=self.tr("bench_save_enable"),
+                       variable=self.bench_save_check_var,
+                       font=("Arial", 9)).pack(anchor=tk.W, padx=6)
+        dir_row = tk.Frame(save_frame)
+        dir_row.pack(fill=tk.X, padx=6, pady=2)
+        tk.Label(dir_row, text=self.tr("bench_save_dir_label"), font=("Arial", 9)).pack(side=tk.LEFT)
+        self.bench_save_dir_entry = tk.Entry(dir_row, font=("Consolas", 9))
+        self.bench_save_dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 4))
+        self.bench_save_dir_entry.insert(0, str(self.config.get("bench_save_dir", "") or ""))
+        tk.Button(dir_row, text=self.tr("btn_browse"), font=("Arial", 8),
+                  command=self._bench_browse_save_dir).pack(side=tk.LEFT, padx=2)
+        tk.Button(dir_row, text=self.tr("bench_save_open"), font=("Arial", 8),
+                  command=self._bench_reveal_save_dir).pack(side=tk.LEFT, padx=2)
+        name_row = tk.Frame(save_frame)
+        name_row.pack(fill=tk.X, padx=6, pady=2)
+        tk.Label(name_row, text=self.tr("bench_save_name_label"), font=("Arial", 9)).pack(side=tk.LEFT)
+        self.bench_save_name_entry = tk.Entry(name_row, font=("Consolas", 9))
+        self.bench_save_name_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+        self._bench_name_auto = True
+        self.bench_save_check_var.trace_add("write", lambda *_a: self._bench_on_save_toggled())
+        self.bench_save_dir_entry.bind("<KeyRelease>", lambda _e: self._bench_refresh_preview())
+        self.bench_save_name_entry.bind("<KeyRelease>", lambda _e: self._bench_on_name_edited())
+
+        ext_row = tk.Frame(dialog)
+        ext_row.pack(fill=tk.X, padx=10, pady=2)
+        self.bench_ext_window_var = tk.BooleanVar(value=bool(self.config.get("bench_ext_window", False)))
+        tk.Checkbutton(ext_row, text=self.tr("bench_ext_window"),
+                       variable=self.bench_ext_window_var,
+                       font=("Arial", 9)).pack(anchor=tk.W)
+        self.bench_ext_window_var.trace_add("write", lambda *_a: self._bench_on_ext_toggled())
+
+        tk.Label(dialog, text=self.tr("bench_preview_label"), font=("Arial", 9, "bold")).pack(anchor=tk.W, padx=10)
+        self.bench_preview = tk.Text(dialog, height=4, wrap=tk.WORD, font=("Consolas", 8))
+        self.bench_preview.pack(fill=tk.X, padx=10, pady=2)
+        self.bench_preview.config(state=tk.DISABLED)
+
+        btns = tk.Frame(dialog)
+        btns.pack(fill=tk.X, padx=10, pady=(4, 10))
+        self.bench_run_btn = tk.Button(btns, text=self.tr("bench_run"), command=self._bench_run_from_dialog)
+        self.bench_run_btn.pack(side=tk.LEFT, padx=2)
+        self.bench_stop_btn = tk.Button(btns, text=self.tr("bench_stop"), command=self.stop_bench_in_terminal)
+        self.bench_stop_btn.pack(side=tk.LEFT, padx=2)
+        tk.Button(btns, text=self.tr("btn_close"),
+                  command=dialog.destroy).pack(side=tk.RIGHT, padx=2)
+        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
+        dialog.bind("<Destroy>", lambda _e: self._bench_on_dialog_close())
+        self.bench_exe_entry.bind("<KeyRelease>", lambda _e: self._bench_refresh_preview())
+        self.bench_model_entry.bind("<KeyRelease>", lambda _e: self._bench_refresh_preview())
+        self._bench_refresh_preview()
+        self._bench_refresh_dialog_state()
+        self.apply_theme()
+
+    def _bench_on_dialog_close(self):
+        self.bench_dialog = None
+        self.bench_exe_entry = None
+        self.bench_model_entry = None
+        self.bench_custom_entry = None
+        self.bench_preview = None
+        self.bench_param_widgets = {}
+        self.bench_save_check_var = None
+        self.bench_save_dir_entry = None
+        self.bench_save_name_entry = None
+        self.bench_ext_window_var = None
+        self._bench_name_auto = True
+
+    def _bench_ext_enabled(self):
+        try:
+            return bool(self.bench_ext_window_var.get()) if self.bench_ext_window_var is not None else False
+        except tk.TclError:
+            return False
+
+    def _bench_on_ext_toggled(self):
+        self.config["bench_ext_window"] = self._bench_ext_enabled()
+        self._bench_refresh_preview()
+
+    def _bench_kill_external(self):
+        proc = getattr(self, "bench_ext_proc", None)
+        self.bench_ext_proc = None
+        self._terminal_kill_proc(proc)
+
+    def _bench_save_enabled(self):
+        try:
+            return bool(self.bench_save_check_var.get()) if self.bench_save_check_var is not None else False
+        except tk.TclError:
+            return False
+
+    def _bench_save_dir(self):
+        if self.bench_save_dir_entry is not None:
+            try:
+                return self.bench_save_dir_entry.get().strip()
+            except tk.TclError:
+                return ""
+        return str(self.config.get("bench_save_dir", "") or "")
+
+    def _bench_on_save_toggled(self):
+        self.config["bench_save_enabled"] = self._bench_save_enabled()
+        self.config["bench_save_dir"] = self._bench_save_dir()
+        self._bench_refresh_preview()
+
+    def _bench_browse_save_dir(self):
+        directory = filedialog.askdirectory(title=self.tr("bench_save_choose_dir"))
+        if directory and self.bench_save_dir_entry is not None:
+            self.bench_save_dir_entry.delete(0, tk.END)
+            self.bench_save_dir_entry.insert(0, os.path.normpath(directory))
+            self.config["bench_save_dir"] = os.path.normpath(directory)
+            self._bench_refresh_preview()
+
+    def _bench_reveal_save_dir(self):
+        directory = self._bench_save_dir()
+        if not directory or not os.path.isdir(directory):
+            messagebox.showwarning(self.tr("msg_attention"), self.tr("bench_no_save_dir"))
+            return
+        try:
+            if sys.platform == "win32":
+                os.startfile(directory)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", directory])
+            else:
+                subprocess.Popen(["xdg-open", directory])
+        except OSError as exc:
+            messagebox.showerror(self.tr("msg_error"), str(exc))
+
+    @staticmethod
+    def _bench_safe_stem(name):
+        stem = os.path.splitext(os.path.basename(name or ""))[0] or "model"
+        return "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in stem)[:60] or "model"
+
+    def _bench_suggest_save_name(self, model):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        return "llama-bench_{stem}_{stamp}.txt".format(stem=self._bench_safe_stem(model), stamp=stamp)
+
+    def _bench_on_name_edited(self):
+        self._bench_name_auto = False
+        self._bench_refresh_preview()
+
+    def _bench_name_entry_text(self):
+        if self.bench_save_name_entry is not None:
+            try:
+                return self.bench_save_name_entry.get().strip()
+            except tk.TclError:
+                return ""
+        return ""
+
+    def _bench_current_save_name(self, model):
+        """Имя файла из поля; пока пользователь не правил — автошаблон."""
+        if not getattr(self, "_bench_name_auto", True):
+            return self._bench_name_entry_text()
+        return self._bench_suggest_save_name(model)
+
+    @staticmethod
+    def _bench_sanitize_filename(raw, model):
+        """Чистит имя для файловой системы; пустое — заменяет автошаблоном."""
+        base = os.path.basename((raw or "").strip()).strip().rstrip(". ")
+        base = "".join("_" if (ord(ch) < 32 or ch in '<>:"/\\|?*') else ch for ch in base)
+        if not base:
+            return None
+        if not base.lower().endswith(".txt"):
+            base += ".txt"
+        return base
+
+    def _bench_make_save_path(self, save_dir, model):
+        if getattr(self, "_bench_name_auto", True):
+            filename = self._bench_suggest_save_name(model)
+        else:
+            filename = self._bench_sanitize_filename(self._bench_name_entry_text(), model)
+            if not filename:
+                filename = self._bench_suggest_save_name(model)
+        return os.path.normpath(os.path.join(save_dir, filename))
+
+    @staticmethod
+    def _ps_quote(text):
+        return "'" + str(text).replace("'", "''") + "'"
+
+    def _bench_history_files(self):
+        """Список актуальных сохранённых замеров (текущий сеанс, до 12 файлов)."""
+        history = []
+        seen = set()
+        for path in getattr(self, "bench_history_paths", []):
+            try:
+                exists = os.path.isfile(path)
+            except OSError:
+                exists = False
+            if exists and path not in seen:
+                seen.add(path)
+                history.append(path)
+        return history[-12:]
+
+    def _bench_trace(self, message):
+        """Прямая трассировка в llmsc_debug.log (мимо GUI-лога)."""
+        try:
+            with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(time.strftime("[%Y-%m-%d %H:%M:%S] ") + message + "\n")
+        except Exception:
+            pass
+
+    def _bench_queue_new_path(self):
+        """Файл-очередь для текущей консоли bench (temp, уникален по генерации)."""
+        try:
+            temp_dir = tempfile.gettempdir()
+            for stale in glob.glob(os.path.join(temp_dir, "llmsc_bench_queue_*.txt")):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
+            path = os.path.join(
+                temp_dir,
+                f"llmsc_bench_queue_{os.getpid()}_{getattr(self, 'terminal_gen', 0)}.txt",
+            )
+            with open(path, "w", encoding="utf-8") as handle:
+                pass
+            return path
+        except OSError:
+            return ""
+
+    def _bench_queue_prelude(self, queue_path):
+        """PS-скрипт консоли bench: читает очередь и исполняет замеры в ней."""
+        return (
+            "$__q=" + self._ps_quote(queue_path) + "; "
+            "while($true){ "
+            "try{$__c=[IO.File]::ReadAllText($__q)}catch{$__c=''}; "
+            "if($__c){ [IO.File]::WriteAllText($__q,''); Invoke-Expression $__c; Write-Output '' }; "
+            "Start-Sleep -Milliseconds 200 }"
+        )
+
+    def _bench_queue_write(self, cmd, save_path=""):
+        """Кладёт новый замер в очередь живой консоли (атомарная запись)."""
+        queue_path = getattr(self, "_bench_queue_path", "")
+        if not queue_path:
+            return False
+        line = "& " + " ".join(self._ps_quote(a) for a in cmd)
+        if save_path:
+            line += " | Tee-Object -FilePath " + self._ps_quote(save_path)
+        tmp = queue_path + ".new"
+        try:
+            with open(tmp, "w", encoding="utf-8") as handle:
+                handle.write(line)
+            os.replace(tmp, queue_path)
+        except OSError:
+            return False
+        return True
+
+    def _bench_browse_exe(self):
+        if sys.platform == "win32":
+            title = self.tr("title_select_bench_win")
+            filetypes = [(self.tr("ft_executables_win"), "*.exe"), (self.tr("ft_all_files"), "*.*")]
+        else:
+            title = self.tr("title_select_bench_unix")
+            filetypes = [(self.tr("ft_executables_unix"), "*"), (self.tr("ft_all_files"), "*.*")]
+        path = filedialog.askopenfilename(title=title, filetypes=filetypes)
+        if path and self.bench_exe_entry is not None:
+            self.bench_exe_entry.delete(0, tk.END)
+            self.bench_exe_entry.insert(0, os.path.normpath(path))
+            self._bench_refresh_preview()
+
+    def _bench_browse_model(self):
+        path = filedialog.askopenfilename(
+            title=self.tr("title_select_model"),
+            filetypes=[(self.tr("ft_gguf"), "*.gguf"), (self.tr("ft_all_files"), "*.*")],
+        )
+        if path and self.bench_model_entry is not None:
+            self.bench_model_entry.delete(0, tk.END)
+            self.bench_model_entry.insert(0, os.path.normpath(path))
+            self._bench_refresh_preview()
+
+    def _bench_collect_dialog_state(self):
+        """Считывает диалог в (bench_exe, model, params dict, custom str)."""
+        bench_exe = ""
+        if self.bench_exe_entry is not None:
+            try:
+                bench_exe = os.path.normpath(self.bench_exe_entry.get().strip())
+            except tk.TclError:
+                bench_exe = ""
+        model = ""
+        if self.bench_model_entry is not None:
+            try:
+                model = os.path.normpath(self.bench_model_entry.get().strip())
+            except tk.TclError:
+                model = ""
+        params = {}
+        for param, widget in (self.bench_param_widgets or {}).items():
+            try:
+                if isinstance(widget, tk.BooleanVar):
+                    params[param] = widget.get()
+                else:
+                    params[param] = widget.get().strip()
+            except tk.TclError:
+                pass
+        custom = ""
+        if self.bench_custom_entry is not None:
+            try:
+                custom = self.bench_custom_entry.get().strip()
+            except tk.TclError:
+                custom = ""
+        return bench_exe, model, params, custom
+
+    def build_bench_command(self, bench_exe="", model="", params=None, custom=""):
+        """Строит argv llama-bench: [exe, -m, model] + params + custom."""
+        if params is None:
+            params = {}
+        cmd = [bench_exe, "-m", model]
+        for group in BENCH_PARAM_GROUPS:
+            for spec in group["params"]:
+                param = spec["key"]
+                default = spec["default"]
+                if param not in params:
+                    continue
+                value = params[param]
+                if isinstance(default, bool):
+                    if bool(value):
+                        flag_value = spec.get("flag_value")
+                        if flag_value is not None and str(flag_value) != "":
+                            cmd.extend([param, str(flag_value)])
+                        else:
+                            cmd.append(param)
+                else:
+                    val = str(value or "").strip()
+                    if val:
+                        cmd.extend([param, val])
+        cmd.extend(self.parse_custom_args(custom))
+        return cmd
+
+    def _bench_refresh_preview(self):
+        if not self._bench_dialog_alive() or self.bench_preview is None:
+            return
+        bench_exe, model, params, custom = self._bench_collect_dialog_state()
+        if not bench_exe:
+            try:
+                server = self.exe_entry.get().strip()
+            except (tk.TclError, AttributeError):
+                server = ""
+            bench_exe = self.find_llama_bench("", server)
+        cmd = self.build_bench_command(bench_exe or LLAMA_BENCH_FILENAME, model or "<model.gguf>", params, custom)
+        text = self.format_cli_preview(cmd)
+        save_enabled = self._bench_save_enabled()
+        save_dir = self._bench_save_dir()
+        if getattr(self, "_bench_name_auto", True) and self.bench_save_name_entry is not None:
+            try:
+                self.bench_save_name_entry.delete(0, tk.END)
+                self.bench_save_name_entry.insert(0, self._bench_suggest_save_name(model or "model.gguf"))
+            except tk.TclError:
+                pass
+        if save_enabled:
+            if save_dir:
+                text += "\n" + self.tr("bench_save_to",
+                                       path=os.path.join(save_dir, self._bench_current_save_name(model or "model.gguf")))
+            else:
+                text += "\n" + self.tr("bench_no_save_dir")
+        if self._bench_ext_enabled():
+            text += "\n" + self.tr("bench_ext_note")
+        try:
+            self.bench_preview.config(state=tk.NORMAL)
+            self.bench_preview.delete("1.0", tk.END)
+            self.bench_preview.insert("1.0", text)
+            self.bench_preview.config(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def _bench_refresh_dialog_state(self):
+        running = bool(getattr(self, "bench_running", False)) or bool(
+            getattr(self, "_bench_starting", False))
+        for btn_name, enabled in (("bench_run_btn", not running), ("bench_stop_btn", running)):
+            btn = getattr(self, btn_name, None)
+            if btn is not None:
+                try:
+                    btn.config(state=tk.NORMAL if enabled else tk.DISABLED)
+                except tk.TclError:
+                    pass
+
+    def _bench_run_from_dialog(self):
+        bench_exe, model, params, custom = self._bench_collect_dialog_state()
+        if not bench_exe:
+            try:
+                server = self.exe_entry.get().strip()
+            except (tk.TclError, AttributeError):
+                server = ""
+            bench_exe = self.find_llama_bench("", server)
+        if not bench_exe or not os.path.isfile(bench_exe):
+            messagebox.showerror(self.tr("msg_error"),
+                                 self.tr("bench_not_found", exe=LLAMA_BENCH_FILENAME))
+            return
+        if not model or not os.path.isfile(model):
+            messagebox.showerror(self.tr("msg_error"), self.tr("bench_no_model"))
+            return
+        if getattr(self, "bench_running", False):
+            if not messagebox.askyesno(self.tr("bench_title"), self.tr("bench_already_running")):
+                return
+        if getattr(self, "cli_running", False):
+            if not messagebox.askyesno(self.tr("bench_title"), self.tr("bench_cli_running_warn")):
+                return
+        save_enabled = self._bench_save_enabled()
+        save_dir = self._bench_save_dir()
+        save_path = ""
+        if save_enabled:
+            if not save_dir or not os.path.isdir(save_dir):
+                messagebox.showerror(self.tr("msg_error"), self.tr("bench_no_save_dir"))
+                return
+            try:
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = self._bench_make_save_path(save_dir, model)
+                if os.path.exists(save_path):
+                    if not messagebox.askyesno(self.tr("msg_confirm"),
+                                               self.tr("bench_save_exists", path=save_path)):
+                        return
+                with open(save_path, "a", encoding="utf-8"):
+                    pass
+            except OSError as exc:
+                messagebox.showerror(self.tr("msg_save_error"), str(exc))
+                return
+        ext_window = self._bench_ext_enabled()
+        # Сохраняем редактор в конфиг, чтобы параметры пережили перезапуск.
+        self.config["bench_path"] = bench_exe
+        self.config["bench_params"] = dict(params)
+        self.config["bench_custom_args"] = custom
+        self.config["bench_save_enabled"] = save_enabled
+        self.config["bench_save_dir"] = save_dir
+        self.config["bench_ext_window"] = ext_window
+        try:
+            self.save_config()
+        except OSError as exc:
+            messagebox.showerror(self.tr("msg_save_error"), str(exc))
+            return
+        if save_path:
+            self.bench_last_save_path = save_path
+            if save_path not in getattr(self, "bench_history_paths", []):
+                self.bench_history_paths.append(save_path)
+        cmd = self.build_bench_command(bench_exe, model, params, custom)
+        replay = self._bench_history_files()
+        if save_path and save_path not in replay:
+            replay.append(save_path)
+        replay = [p for p in replay if p != (save_path or "") and os.path.isfile(p)]
+        if ext_window:
+            self.run_bench_external(cmd, save_path, replay)
+        else:
+            self.run_bench_in_terminal(cmd, save_path, replay)
+
+    def run_bench_external(self, cmd, save_path="", replay=()):
+        """Запускает llama-bench в отдельном окне консоли (не встраивая).
+
+        Запасной вариант, если встроенный терминал на этой машине не
+        показывает вывод: окно создаётся системой и всегда видимо.
+        replay — сохранённые .txt предыдущих замеров: их содержимое
+        печатается в новой консоли перед стартом нового замера.
+        """
+        if not cmd:
+            return
+        replay = [p for p in (replay or []) if p]
+        # Гасим возможный pending-старт встроенного bench, чтобы не было
+        # двух параллельных замеров.
+        self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
+        self._bench_kill_external()
+        self._bench_starting = False
+        self.bench_running = True
+        self.bench_cmd = list(cmd)
+        self._bench_refresh_dialog_state()
+        cwd = getattr(self, "terminal_cwd", "") or ""
+        if not isinstance(cwd, str) or not os.path.isdir(cwd):
+            cwd = os.path.expanduser("~")
+        header = f"--- {self.tr('bench_started_log')} ---\n{self.tr('log_command')} {self.format_cli_preview(cmd)}\n"
+        if save_path:
+            header += f"{self.tr('bench_save_to', path=save_path)}\n"
+        header += f"{self.tr('bench_ext_note')}\n"
+        self.log(header + "\n")
+        try:
+            if sys.platform == "win32":
+                system_root = os.environ.get("SystemRoot", r"C:\Windows")
+                conhost = os.path.join(system_root, "System32", "conhost.exe")
+                if not os.path.exists(conhost):
+                    conhost = "conhost.exe"
+                replay_ps = ""
+                for path in replay:
+                    replay_ps += "Get-Content " + self._ps_quote(path) + "; "
+                if save_path:
+                    ps_cmd = (
+                        replay_ps
+                        + "& " + " ".join(self._ps_quote(a) for a in cmd)
+                        + " | Tee-Object -FilePath " + self._ps_quote(save_path)
+                    )
+                    proc = subprocess.Popen(
+                        [conhost, "powershell.exe", "-NoExit", "-NoProfile",
+                         "-Command", ps_cmd],
+                        cwd=cwd,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                elif replay_ps:
+                    ps_cmd = replay_ps + "& " + " ".join(self._ps_quote(a) for a in cmd)
+                    proc = subprocess.Popen(
+                        [conhost, "powershell.exe", "-NoExit", "-NoProfile",
+                         "-Command", ps_cmd],
+                        cwd=cwd,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                else:
+                    proc = subprocess.Popen(
+                        [conhost, "cmd.exe", "/K", subprocess.list2cmdline(cmd)],
+                        cwd=cwd,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+            else:
+                if shutil.which("xterm") is None:
+                    raise FileNotFoundError("xterm")
+                replay_sh = "".join(
+                    "cat " + shlex.quote(p) + "; " for p in replay)
+                if save_path:
+                    shell_cmd = (replay_sh + shlex.join(cmd)
+                                 + " | tee " + shlex.quote(save_path) + "; exec sh")
+                elif replay_sh:
+                    shell_cmd = replay_sh + shlex.join(cmd) + "; exec sh"
+                else:
+                    shell_cmd = shlex.join(cmd) + "; exec sh"
+                proc = subprocess.Popen(
+                    ["xterm", "-e", "sh", "-c", shell_cmd],
+                    cwd=cwd,
+                )
+        except Exception as exc:
+            self.bench_running = False
+            self.bench_cmd = []
+            try:
+                self._bench_refresh_dialog_state()
+            except AttributeError:
+                pass
+            messagebox.showerror(self.tr("msg_error"), str(exc))
+            return
+        self.bench_ext_proc = proc
+        exe_name = os.path.basename(cmd[0]) if cmd else ""
+        threading.Thread(
+            target=self._child_monitor_thread,
+            args=(getattr(self, "terminal_gen", 0), proc, exe_name, True, "bench"),
+            daemon=True,
+        ).start()
+        self._bench_refresh_dialog_state()
+
+    def _child_monitor_thread(self, gen, proc, exe_name, is_ext, kind):
+        """Следит за рабочим процессом внутри живого консоли (фон).
+
+        Консоль запускается с cmd /K / powershell -NoExit, поэтому её
+        собственный процесс не намекает на конец сессии. Смотрим за
+        потомком (llama-cli.exe / llama-bench.exe): пропал (или так и
+        не появился за отведённое время, или консоль закрыли) —
+        сессия окончена.
+        """
+        seen = False
+        missed = 0
+        deadline = time.time() + 15.0
+        while True:
+            time.sleep(1.5)
+            try:
+                exited = proc.poll() is not None
+            except Exception:
+                exited = True
+            if exited:
+                break
+            if gen != getattr(self, "terminal_gen", 0):
+                return
+            if is_ext:
+                if getattr(self, "bench_ext_proc", None) is not proc:
+                    return
+            finished = False
+            if sys.platform == "win32":
+                try:
+                    found = _win32_descendant_exists(proc.pid, exe_name)
+                except Exception:
+                    found = None
+            else:
+                try:
+                    found = _posix_descendant_exists(proc.pid, exe_name)
+                except Exception:
+                    found = None
+            if found:
+                seen = True
+                missed = 0
+            elif found is False:
+                # Одиночный сбой снимка не должен ронять сессию:
+                # подтверждаем исчезновение процесса двумя тиками подряд.
+                missed += 1
+                if seen and missed >= 2:
+                    finished = True
+                elif not seen and time.time() >= deadline:
+                    finished = True
+            if finished:
+                break
+        self.root.after(0, self._session_finished_event, gen, proc, is_ext, kind)
+
+    def _session_finished_event(self, gen, proc, is_ext, kind):
+        if kind == "cli":
+            self._cli_session_finished(gen)
+        else:
+            self._bench_session_finished(gen, proc, is_ext)
+
+    def _cli_session_finished(self, gen):
+        """Сессия llama-cli окончена (UI-поток): сбрасываем состояние."""
+        if gen != getattr(self, "terminal_gen", 0):
+            return
+        if getattr(self, "_cli_starting", False):
+            # Началась новая сессия — её состояние не трогаем.
+            return
+        if not getattr(self, "cli_running", False):
+            return
+        self.cli_running = False
+        self.cli_cmd = []
+        self.log(f"{self.tr('cli_finished_log')}\n")
+        try:
+            self._cli_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def _bench_session_finished(self, gen, proc, is_ext):
+        """Замер окончен (UI-поток): сбрасываем состояние bench-сессии."""
+        if is_ext:
+            if getattr(self, "bench_ext_proc", None) is not proc:
+                return
+            self.bench_ext_proc = None
+        else:
+            if gen != getattr(self, "terminal_gen", 0):
+                return
+            if getattr(self, "_bench_starting", False):
+                # Началась новая сессия — её состояние не трогаем.
+                return
+            if getattr(self, "bench_ext_proc", None) is not None:
+                return
+        if not getattr(self, "bench_running", False):
+            return
+        self.bench_running = False
+        self.bench_cmd = []
+        self.log(f"{self.tr('bench_finished_log')}\n")
+        if getattr(self, "bench_last_save_path", ""):
+            self.log(f"{self.tr('bench_save_to', path=self.bench_last_save_path)}\n")
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def run_bench_in_terminal(self, cmd, save_path="", replay=()):
+        """Запускает llama-bench во встроенном терминале.
+
+        Windows: живая консоль-очередь — одна и та же консоль обслуживает
+        все последующие замеры, поэтому вывод прошлых замеров остаётся в
+        прокрутке и экран не стирается. Новый замер кладётся в файл-очередь,
+        PowerShell-листенер его исполняет. Linux: консоль пересоздаётся
+        per-run, прошлые замеры возвращаются через replay (cat .txt).
+        """
+        if not cmd:
+            return
+        replay = [p for p in (replay or []) if p and os.path.isfile(p)]
+        reuse = (sys.platform == "win32"
+                 and getattr(self, "_bench_queue_mode", False)
+                 and getattr(self, "_bench_queue_path", "")
+                 and self._terminal_is_alive())
+        self._bench_trace(
+            f"run_bench enter: reuse={int(bool(reuse))}"
+            f" qmode={int(bool(getattr(self, '_bench_queue_mode', False)))}"
+            f" qpath={int(bool(getattr(self, '_bench_queue_path', '')))}"
+            f" alive={int(bool(self._terminal_is_alive()))}")
+        if reuse:
+            self._bench_trace("run_bench -> continue path")
+            self._bench_continue_in_terminal(cmd, save_path)
+            return
+        self._bench_trace("run_bench -> fresh path")
+        self.bench_queue_mode_reset()
+        self.bench_queue_mode_reset()
+        self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
+        self._bench_starting = True
+        # Сеансы взаимно исключающие: гасим остатки CLI-состояния.
+        self._cli_starting = False
+        self.cli_running = False
+        self.cli_cmd = []
+        self._cli_refresh_dialog_state()
+        self._bench_kill_external()
+        self._terminal_cancel_watchdog()
+        old_proc = getattr(self, "terminal_proc", None)
+        self.terminal_proc = None
+        self.terminal_hwnd = None
+        self._terminal_kill_proc(old_proc)
+        self._bench_refresh_dialog_state()
+        self._bench_queue_mode = sys.platform == "win32"
+        self._bench_queue_path = self._bench_queue_new_path() if self._bench_queue_mode else ""
+        if self._bench_queue_path:
+            # Команда в очереди до спавна: листенер сразу возьмёт её в работу.
+            self._bench_queue_write(cmd, save_path)
+        self.show_terminal(save=True)
+        header = f"--- {self.tr('bench_started_log')} ---\n{self.tr('log_command')} {self.format_cli_preview(cmd)}\n"
+        if not self._bench_queue_mode and replay:
+            header += self.tr("bench_replay", count=len(replay)) + "\n"
+        if save_path:
+            header += f"{self.tr('bench_save_to', path=save_path)}\n"
+        self.log(header + "\n")
+        gen = getattr(self, "terminal_gen", 0)
+        try:
+            host_hwnd = int(self.terminal_host.winfo_id())
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            host_hwnd = 0
+        cwd = getattr(self, "terminal_cwd", "") or ""
+        if not isinstance(cwd, str) or not os.path.isdir(cwd):
+            cwd = os.path.expanduser("~")
+        self.bench_cmd = list(cmd)
+        threading.Thread(
+            target=self._bench_spawn_thread,
+            args=(gen, host_hwnd, cwd, list(cmd), save_path or "",
+                  list(replay), self._bench_queue_path),
+            daemon=True,
+        ).start()
+
+    def _bench_continue_in_terminal(self, cmd, save_path=""):
+        """Следующий замер в той же консоли: передаём его через очередь."""
+        gen = getattr(self, "terminal_gen", 0)
+        self._bench_starting = True
+        self._cli_starting = False
+        self.cli_running = False
+        self.cli_cmd = []
+        self._cli_refresh_dialog_state()
+        self._bench_refresh_dialog_state()
+        self.show_terminal(save=True)
+        header = f"--- {self.tr('bench_started_log')} ---\n{self.tr('log_command')} {self.format_cli_preview(cmd)}\n"
+        if save_path:
+            header += f"{self.tr('bench_save_to', path=save_path)}\n"
+        self.log(header + "\n")
+        self.bench_cmd = list(cmd)
+        written = self._bench_queue_write(cmd, save_path)
+        if not written:
+            # Очередь сломалась: обычный перезапуск консоли.
+            self.bench_queue_mode_reset()
+            self.run_bench_in_terminal(cmd, save_path, [])
+            return
+        proc = getattr(self, "terminal_proc", None)
+        self.bench_running = True
+        self._bench_starting = False
+        self._bench_proc_seen = False
+        self._bench_watch_deadline = time.time() + 20.0
+        exe_name = os.path.basename(getattr(self, "bench_cmd", [""])[0] or "")
+        self.log(f"monitor: слежу за {exe_name}\n")
+        threading.Thread(
+            target=self._child_monitor_thread,
+            args=(gen, proc, exe_name, False, "bench"),
+            daemon=True,
+        ).start()
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def bench_queue_mode_reset(self):
+        self._bench_queue_mode = False
+        self._bench_queue_path = ""
+
+    def _bench_spawn_thread(self, gen, host_hwnd, cwd, cmd, save_path="", replay=(), queue_path=""):
+        """Запуск консоли с llama-bench внутри (фон, без обращений к Tk)."""
+        try:
+            if sys.platform == "win32":
+                system_root = os.environ.get("SystemRoot", r"C:\Windows")
+                conhost = os.path.join(system_root, "System32", "conhost.exe")
+                if not os.path.exists(conhost):
+                    conhost = "conhost.exe"
+                if queue_path:
+                    # Постоянная консоль: листенер очереди исполняет каждый
+                    # новый замер в этом же окне — вывод прошлых прогонов
+                    # остаётся в прокрутке (экран не стирается).
+                    prelude = self._bench_queue_prelude(queue_path)
+                    proc = subprocess.Popen(
+                        [conhost, "powershell.exe", "-NoExit", "-NoProfile",
+                         "-Command", prelude],
+                        cwd=cwd,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE,
+                    )
+                else:
+                    replay_ps = "".join(
+                        "Get-Content " + self._ps_quote(p) + "; " for p in replay)
+                    if save_path:
+                        # Живой вывод в консоли + копия в файл: прогоняем bench
+                        # через PowerShell Tee-Object (у cmd нет tee).
+                        ps_cmd = (
+                            replay_ps
+                            + "& " + " ".join(self._ps_quote(a) for a in cmd)
+                            + " | Tee-Object -FilePath " + self._ps_quote(save_path)
+                        )
+                        proc = subprocess.Popen(
+                            [conhost, "powershell.exe", "-NoExit", "-NoProfile",
+                             "-Command", ps_cmd],
+                            cwd=cwd,
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        )
+                    elif replay_ps:
+                        ps_cmd = replay_ps + "& " + " ".join(self._ps_quote(a) for a in cmd)
+                        proc = subprocess.Popen(
+                            [conhost, "powershell.exe", "-NoExit", "-NoProfile",
+                             "-Command", ps_cmd],
+                            cwd=cwd,
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        )
+                    else:
+                        cmdline = subprocess.list2cmdline(cmd)
+                        proc = subprocess.Popen(
+                            [conhost, "cmd.exe", "/K", cmdline],
+                            cwd=cwd,
+                            creationflags=subprocess.CREATE_NEW_CONSOLE,
+                        )
+            else:
+                if shutil.which("xterm") is None:
+                    raise FileNotFoundError("xterm")
+                replay_sh = "".join("cat " + shlex.quote(p) + "; " for p in replay)
+                if save_path:
+                    shell_cmd = (replay_sh + shlex.join(cmd)
+                                 + " | tee " + shlex.quote(save_path) + "; exec sh")
+                elif replay_sh:
+                    shell_cmd = replay_sh + shlex.join(cmd) + "; exec sh"
+                else:
+                    shell_cmd = shlex.join(cmd) + "; exec sh"
+                proc = subprocess.Popen(
+                    ["xterm", "-into", str(host_hwnd), "-e", "sh", "-c", shell_cmd],
+                    cwd=cwd,
+                )
+        except Exception as exc:
+            self.root.after(0, self._bench_spawn_failed, gen, str(exc))
+            return
+        hwnd = None
+        if sys.platform == "win32":
+            hwnd = _win32_find_console_window(proc.pid, proc=proc, timeout=8.0)
+        self.root.after(0, lambda: self._bench_finish_embed(gen, proc, hwnd))
+
+    def _bench_spawn_failed(self, gen, error):
+        if gen != getattr(self, "terminal_gen", 0):
+            return
+        self._bench_starting = False
+        self.bench_running = False
+        self.bench_cmd = []
+        self._terminal_spawn_failed(gen, error)
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def _bench_finish_embed(self, gen, proc, hwnd):
+        if gen != getattr(self, "terminal_gen", 0):
+            self._terminal_kill_proc(proc)
+            return
+        try:
+            dead = proc.poll() is not None
+        except Exception:
+            dead = True
+        if dead:
+            self._bench_starting = False
+            self.bench_running = False
+            self.bench_cmd = []
+            self._terminal_spawn_failed(gen, proc.args if hasattr(proc, "args") else "")
+            try:
+                self._bench_refresh_dialog_state()
+            except AttributeError:
+                pass
+            return
+        self.bench_running = True
+        self._bench_starting = False
+        self._terminal_spawn_failures = 0
+        self._bench_proc_seen = False
+        self._bench_watch_deadline = time.time() + 20.0
+        # Переиспользуем штатное встраивание окна консоли в панель.
+        self._terminal_finish_embed(gen, proc, hwnd)
+        exe_name = os.path.basename(getattr(self, "bench_cmd", [""])[0] or "")
+        self.log(f"monitor: слежу за {exe_name}\n")
+        threading.Thread(
+            target=self._child_monitor_thread,
+            args=(gen, proc, exe_name, False, "bench"),
+            daemon=True,
+        ).start()
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
+
+    def stop_bench_in_terminal(self):
+        """Останавливает llama-bench (встроенный и внешний) и возвращает чистую консоль."""
+        if not getattr(self, "bench_running", False) and not getattr(self, "_bench_starting", False):
+            return
+        self.terminal_gen = getattr(self, "terminal_gen", 0) + 1
+        self._bench_starting = False
+        self.bench_running = False
+        self.bench_cmd = []
+        self.bench_queue_mode_reset()
+        self._terminal_spawn_failures = 0
+        proc = getattr(self, "terminal_proc", None)
+        self.terminal_proc = None
+        self.terminal_hwnd = None
+        self._terminal_kill_proc(proc)
+        self._bench_kill_external()
+        self.log(f"\n--- {self.tr('bench_stopped_log')} ---\n")
+        try:
+            self._bench_refresh_dialog_state()
+        except AttributeError:
+            pass
         self._terminal_ensure()
 
     def _build_param_group_grid(self, parent, group):
@@ -4114,6 +6135,18 @@ class LlamaServerGUI:
             messagebox.showwarning(self.tr("msg_attention"), self.tr("msg_reset_while_running"))
             return
 
+        if self._cli_dialog_alive():
+            try:
+                self.cli_dialog.destroy()
+            except tk.TclError:
+                pass
+            self._cli_on_dialog_close()
+        if self._bench_dialog_alive():
+            try:
+                self.bench_dialog.destroy()
+            except tk.TclError:
+                pass
+            self._bench_on_dialog_close()
         self.config = self.get_default_config()
         self.i18n.set_language(self.config.get("language", self.i18n.language))
         self.apply_window_geometry()
@@ -4225,13 +6258,18 @@ class LlamaServerGUI:
         model_path = os.path.normpath(self.model_entry.get().strip()) if hasattr(self, "model_entry") else ""
         model_name = os.path.splitext(os.path.basename(model_path))[0] if model_path else ""
 
+        spec_map = {spec.get("key"): spec for group in PARAM_GROUPS for spec in group.get("params", [])}
         dynamic_args = []
         for param, widget in self.param_entries.items():
             if param in BACKEND_DEVICE_KEYS:
                 continue
             if isinstance(widget, tk.BooleanVar):
                 if widget.get():
-                    dynamic_args.append(param)
+                    flag_value = spec_map.get(param, {}).get("flag_value")
+                    if flag_value is not None and str(flag_value) != "":
+                        dynamic_args.extend([param, str(flag_value)])
+                    else:
+                        dynamic_args.append(param)
             else:
                 val = widget.get().strip()
                 if val:
@@ -4289,6 +6327,14 @@ class LlamaServerGUI:
                 self.log_area.delete("1.0", f"{overflow + 1}.0")
             except tk.TclError:
                 pass
+        # Зеркало лога в файл: помогает, когда GUI-лог неудобно копировать.
+        try:
+            with open(DEBUG_LOG_PATH, "a", encoding="utf-8", errors="replace") as handle:
+                for line in text.splitlines():
+                    handle.write(
+                        time.strftime("[%Y-%m-%d %H:%M:%S] ") + line + "\n")
+        except Exception:
+            pass
 
     def log(self, text):
         self.root.after(0, lambda: self.append_log(text))
@@ -4338,6 +6384,18 @@ class LlamaServerGUI:
         except OSError as exc:
             messagebox.showerror(self.tr("msg_save_error"), str(exc))
 
+    # Готовность сервера: llama.cpp периодически меняет формат логов.
+    # Раньше это было "llama_server: model loaded", в новых сборках —
+    # "srv  server_run_i: model loaded", в части сборок — JSON
+    # ("msg":"model loaded"). Ориентируемся на саму фразу "model loaded"
+    # (в "loading model '...'" её нет, так что ложных срабатываний нет),
+    # а для страховки ещё и на "listening on http(/https)", печатаемую
+    # непосредственно перед входом в главный цикл сервера.
+    _READY_MARKER_RE = re.compile(r"\bmodel loaded\b|\blistening on http")
+
+    def _line_marks_server_ready(self, line):
+        return bool(self._READY_MARKER_RE.search(line.rstrip()))
+
     def read_output(self, proc=None):
         # Привязываемся к своему процессу локально: после рестарта
         # self.process уже указывает на новый сервер, а этот поток
@@ -4349,9 +6407,8 @@ class LlamaServerGUI:
             if not self.is_running or self.process is not proc:
                 break
             self.log(line)
-            if not self.server_ready and "llama_server: model loaded" in line:
+            if not self.server_ready and self._line_marks_server_ready(line):
                 self.server_ready = True
-                self._update_badge_status()
                 self.root.after(0, self.set_ready_state)
 
         try:

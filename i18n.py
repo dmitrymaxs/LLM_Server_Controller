@@ -18,7 +18,7 @@ def _map(key: str, ru: str, en: str) -> dict:
 
 TRANSLATIONS = {
     # --- Заголовок окна ---
-    "app_title": _map("app_title", "LLM Server Controller v.0.2.0", "LLM Server Controller v.0.2.0"),
+    "app_title": _map("app_title", "LLM Server Controller v.0.2.1", "LLM Server Controller v.0.2.1"),
 
     # --- Меню ---
     "menu_file": _map("menu_file", "Файл", "File"),
@@ -55,6 +55,111 @@ TRANSLATIONS = {
         "Не удалось открыть системную консоль: {error}",
         "Failed to open system console: {error}",
     ),
+
+    # --- llama-cli (запуск в терминале) ---
+    "menu_cli": _map("menu_cli", "llama-cli…", "llama-cli…"),
+    "btn_cli": _map("btn_cli", "CLI", "CLI"),
+    "menu_bench": _map("menu_bench", "llama-bench…", "llama-bench…"),
+    "btn_bench": _map("btn_bench", "Bench", "Bench"),
+    "bench_title": _map("bench_title", "Замер llama-bench", "llama-bench benchmark"),
+    "bench_exe_label": _map("bench_exe_label", "llama-bench:", "llama-bench:"),
+    "bench_model_label": _map("bench_model_label", "Модель:", "Model:"),
+    "bench_params_label": _map("bench_params_label", "Параметры:", "Parameters:"),
+    "bench_custom_label": _map("bench_custom_label", "Доп. аргументы:", "Extra args:"),
+    "bench_preview_label": _map("bench_preview_label", "Команда:", "Command:"),
+    "bench_run": _map("bench_run", "Запустить в терминале", "Run in terminal"),
+    "bench_stop": _map("bench_stop", "Стоп", "Stop"),
+    "bench_not_found": _map(
+        "bench_not_found",
+        "Не найден llama-bench. Укажите путь вручную или установите llama.cpp (файл {exe} рядом с llama-server).",
+        "llama-bench not found. Specify the path manually or install llama.cpp ({exe} next to llama-server).",
+    ),
+    "bench_no_model": _map(
+        "bench_no_model",
+        "Укажите корректный путь к файлу модели (.gguf)",
+        "Specify a valid path to the model file (.gguf)",
+    ),
+    "bench_already_running": _map(
+        "bench_already_running",
+        "llama-bench уже запущен в терминале. Остановить его и запустить заново?",
+        "llama-bench is already running in the terminal. Stop it and restart?",
+    ),
+    "bench_cli_running_warn": _map(
+        "bench_cli_running_warn",
+        "llama-cli уже запущен в терминале. Всё равно запустить llama-bench (предыдущая сессия будет завершена)?",
+        "llama-cli is already running in the terminal. Start llama-bench anyway (previous session will be terminated)?",
+    ),
+    "bench_started_log": _map("bench_started_log", "--- Запуск llama-bench в терминале ---", "--- Starting llama-bench in terminal ---"),
+    "bench_stopped_log": _map("bench_stopped_log", "--- llama-bench остановлен ---", "--- llama-bench stopped ---"),
+    "title_select_bench_win": _map("title_select_bench_win", "Выберите llama-bench.exe", "Select llama-bench.exe"),
+    "title_select_bench_unix": _map("title_select_bench_unix", "Выберите llama-bench", "Select llama-bench"),
+    "bench_save_title": _map("bench_save_title", "Сохранение результата", "Save result"),
+    "bench_save_enable": _map("bench_save_enable", "Сохранить результат в .txt файл", "Save result to .txt file"),
+    "bench_save_dir_label": _map("bench_save_dir_label", "Папка:", "Folder:"),
+    "bench_save_open": _map("bench_save_open", "Открыть", "Open"),
+    "bench_save_choose_dir": _map("bench_save_choose_dir", "Выберите папку для сохранения результата bench", "Select folder to save bench result"),
+    "bench_save_name_label": _map("bench_save_name_label", "Имя файла:", "File name:"),
+    "bench_save_exists": _map(
+        "bench_save_exists",
+        "Файл уже существует. Перезаписать?\n{path}",
+        "File already exists. Overwrite?\n{path}",
+    ),
+    "bench_finished_log": _map("bench_finished_log", "--- llama-bench завершён ---", "--- llama-bench finished ---"),
+    "bench_save_to": _map("bench_save_to", "→ сохранение в: {path}", "→ saving to: {path}"),
+    "bench_no_save_dir": _map(
+        "bench_no_save_dir",
+        "Выберите существующую папку для сохранения результата.",
+        "Select an existing folder to save the result.",
+    ),
+    "bench_ext_window": _map(
+        "bench_ext_window",
+        "Запустить в отдельном окне (если встроенный терминал пуст)",
+        "Run in a separate window (if the embedded terminal is blank)",
+    ),
+    "bench_ext_note": _map(
+        "bench_ext_note",
+        "→ отдельное окно консоли",
+        "→ separate console window",
+    ),
+    "bench_replay": _map(
+        "bench_replay",
+        "→ повторный вывод предыдущих замеров: {count} файл(ов)",
+        "→ replaying previous runs: {count} file(s)",
+    ),
+    "cli_title": _map("cli_title", "Запуск llama-cli", "Run llama-cli"),
+    "cli_exe_label": _map("cli_exe_label", "llama-cli:", "llama-cli:"),
+    "cli_model_label": _map("cli_model_label", "Модель:", "Model:"),
+    "cli_params_label": _map("cli_params_label", "Параметры:", "Parameters:"),
+    "cli_custom_label": _map("cli_custom_label", "Доп. аргументы:", "Extra args:"),
+    "cli_preview_label": _map("cli_preview_label", "Команда:", "Command:"),
+    "cli_run": _map("cli_run", "Запустить в терминале", "Run in terminal"),
+    "cli_stop": _map("cli_stop", "Стоп", "Stop"),
+    "cli_status_running": _map("cli_status_running", "llama-cli: работает", "llama-cli: running"),
+    "cli_not_found": _map(
+        "cli_not_found",
+        "Не найден llama-cli. Укажите путь вручную или установите llama.cpp (файл {exe} рядом с llama-server).",
+        "llama-cli not found. Specify the path manually or install llama.cpp ({exe} next to llama-server).",
+    ),
+    "cli_no_model": _map(
+        "cli_no_model",
+        "Укажите корректный путь к файлу модели (.gguf)",
+        "Specify a valid path to the model file (.gguf)",
+    ),
+    "cli_already_running": _map(
+        "cli_already_running",
+        "llama-cli уже запущен в терминале. Остановить его и запустить заново?",
+        "llama-cli is already running in the terminal. Stop it and restart?",
+    ),
+    "cli_server_running_warn": _map(
+        "cli_server_running_warn",
+        "Сервер уже запущен и занимает видеопамять. Продолжить запуск llama-cli?",
+        "The server is already running and occupies VRAM. Start llama-cli anyway?",
+    ),
+    "cli_started_log": _map("cli_started_log", "--- Запуск llama-cli в терминале ---", "--- Starting llama-cli in terminal ---"),
+    "cli_stopped_log": _map("cli_stopped_log", "--- llama-cli остановлен ---", "--- llama-cli stopped ---"),
+    "cli_finished_log": _map("cli_finished_log", "--- llama-cli завершён ---", "--- llama-cli finished ---"),
+    "title_select_cli_win": _map("title_select_cli_win", "Выберите llama-cli.exe", "Select llama-cli.exe"),
+    "title_select_cli_unix": _map("title_select_cli_unix", "Выберите llama-cli", "Select llama-cli"),
 
     # --- Менеджер моделей (локальные + HuggingFace) ---
     "menu_models": _map("menu_models", "Модели…", "Models…"),
@@ -534,6 +639,10 @@ TRANSLATIONS = {
 
 # Названия категорий параметров (id группы -> {lang: title})
 GROUP_TITLES = {
+    "cli_main":        {"ru": "CLI: Основные",                  "en": "CLI: Main"},
+    "cli_gen":         {"ru": "CLI: Генерация",                 "en": "CLI: Generation"},
+    "bench_main":      {"ru": "Bench: Тест",                    "en": "Bench: Test"},
+    "bench_compute":   {"ru": "Bench: Вычисления",              "en": "Bench: Compute"},
     "main":            {"ru": "Основные",                       "en": "Main"},
     "context":         {"ru": "Контекст",                       "en": "Context"},
     "gpu":             {"ru": "GPU и вычисления",                 "en": "GPU & compute"},
@@ -622,11 +731,33 @@ PARAM_HINTS = {
     "--device-hip":      {"ru": "Устройство HIP (напр. HIP0)",     "en": "HIP device (e.g. HIP0)"},
     "--device-metal":   {"ru": "Устройство Metal",                 "en": "Metal device"},
     "--device-sycl":     {"ru": "Устройство SYCL",                 "en": "SYCL device"},
+    "--prompt":          {"ru": "Стартовый промпт (-p)",           "en": "Initial prompt (-p)"},
+    "--system-prompt":   {"ru": "Системный промпт",                "en": "System prompt"},
+    "--prompt-file":     {"ru": "Файл с промптом (-f)",            "en": "Prompt file (-f)"},
+    "--file":            {"ru": "Файл с промптом (-f)",            "en": "Prompt file (-f)"},
+    "--predict":         {"ru": "Макс. новых токенов (-n)",        "en": "Max new tokens (-n)"},
+    "--interactive":     {"ru": "Интерактивный режим (-i)",        "en": "Interactive mode (-i)"},
+    "--conversation":    {"ru": "Режим диалога (-cnv)",            "en": "Conversation mode (-cnv)"},
+    "--reverse-prompt":  {"ru": "Строка возврата управления",      "en": "Reverse prompt"},
+    "--color":           {"ru": "Цветной вывод",                   "en": "Color output"},
+    "--flash-attn":      {"ru": "Flash Attention (-fa)",           "en": "Flash Attention (-fa)"},
+    "--n-prompt":        {"ru": "Промпт-токены pp (-p)",           "en": "Prompt tokens pp (-p)"},
+    "--n-gen":           {"ru": "Генерация токенов tg (-n)",       "en": "Generated tokens tg (-n)"},
+    "-pg":               {"ru": "Комбо-тест pp,tg (напр. 512,128)", "en": "Combined pp,tg test (e.g. 512,128)"},
+    "--n-depth":         {"ru": "Глубина контекста KV (-d)",       "en": "KV context depth (-d)"},
+    "--repetitions":     {"ru": "Повторы каждого теста (-r)",      "en": "Repetitions per test (-r)"},
+    "--output":          {"ru": "Формат вывода (-o)",              "en": "Output format (-o)"},
+    "--progress":        {"ru": "Индикатор прогресса",             "en": "Progress indicator"},
+    "--no-warmup":       {"ru": "Пропустить warmup-прогоны",       "en": "Skip warmup runs"},
+    "-lv":               {"ru": "Детализация логов (-lv 4)",        "en": "Log verbosity (-lv 4)"},
+    "--reasoning":       {"ru": "Reasoning/thinking в чате (on/off/auto, default auto)", "en": "Reasoning/thinking in chat (on/off/auto, default auto)"},
 }
 
 
 # Подсказки для групп (id группы -> {lang: hint}). Рекомендуемые backend-описания.
 GROUP_HINTS = {
+    "bench_main":     {"ru": "Что замеряем: pp — обработка промпта, tg — генерация", "en": "What to measure: pp — prompt processing, tg — generation"},
+    "bench_compute":  {"ru": "Потоки, GPU-слои, батчи — как у сервера",  "en": "Threads, GPU layers, batches — like the server"},
     "main":           {"ru": "Наиболее часто используемые параметры",      "en": "Most commonly used parameters"},
     "backend_cuda":   {"ru": "Максимальная поддержка GPU. --device CUDA0, CUDA1…", "en": "Maximum GPU support. --device CUDA0, CUDA1..."},
     "backend_vulkan": {"ru": "Универсальный backend. --device Vulkan0…",   "en": "Universal backend. --device Vulkan0..."},

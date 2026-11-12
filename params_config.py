@@ -46,6 +46,8 @@ PARAM_GROUPS = [
             {"key": "--host", "default": "0.0.0.0", "hint": "IP-адрес сервера"},
             {"key": "--port", "default": "18080", "hint": "TCP-порт"},
             {"key": "--agent", "default": False, "hint": "Режим агента WebUI (встроенные инструменты, CORS-прокси)"},
+            {"key": "-lv", "default": False, "flag_value": "4", "hint": "Детализация логов (-lv 4)"},
+            {"key": "--reasoning", "default": "auto", "choices": ["auto", "on", "off"], "hint": "Reasoning/thinking в чате (on/off/auto)"},
         ],
     },
     {
@@ -241,6 +243,181 @@ BACKEND_DEVICE_KEYS = (
     "--device-sycl",
 )
 
+# ================= llama-cli (интерактивный чат в терминале) =================
+# Отдельный набор параметров: ключи могут совпадать с серверными
+# (--ctx-size, --threads ...), но виджеты диалога CLI хранятся отдельно
+# (self.cli_param_widgets) и сохраняются в config["cli_params"].
+
+CLI_PARAM_GROUPS = [
+    {
+        "id": "cli_main",
+        "title": "CLI: Основные",
+        "expanded": True,
+        "hint": "Модель берётся из поля диалога, остальное — флаги llama-cli",
+        "params": [
+            {"key": "--prompt", "default": "", "hint": "Стартовый промпт (-p)"},
+            {"key": "--system-prompt", "default": "", "hint": "Системный промпт (-sys)"},
+            {"key": "--file", "default": "", "hint": "Файл с промптом (-f)"},
+            {"key": "--ctx-size", "default": "4096", "hint": "Размер контекста (-c)"},
+            {"key": "--predict", "default": "", "hint": "Макс. новых токенов (-n)"},
+            {"key": "--threads", "default": "", "hint": "Потоки CPU (-t)"},
+            {"key": "--n-gpu-layers", "default": "", "hint": "Слои на GPU (-ngl)"},
+            {"key": "--device", "default": "", "hint": "Устройство (CUDA0, Vulkan0…)"},
+            {"key": "--interactive", "default": False, "hint": "Интерактивный режим (-i)"},
+            {"key": "--conversation", "default": False, "hint": "Режим диалога (-cnv)"},
+            {"key": "--reverse-prompt", "default": "", "hint": "Строка возврата управления (-r)"},
+            {"key": "--color", "default": "auto", "choices": ["auto", "on", "off"], "hint": "Цветной вывод (-co)"},
+            {"key": "-lv", "default": False, "flag_value": "4", "hint": "Детализация логов (-lv 4)"},
+            {"key": "--reasoning", "default": "auto", "choices": ["auto", "on", "off"], "hint": "Reasoning/thinking в чате (on/off/auto)"},
+        ],
+    },
+    {
+        "id": "cli_gen",
+        "title": "CLI: Генерация",
+        "expanded": False,
+        "params": [
+            {"key": "--temp", "default": "", "hint": "Температура"},
+            {"key": "--top-k", "default": "", "hint": "Top-K sampling"},
+            {"key": "--top-p", "default": "", "hint": "Top-P sampling"},
+            {"key": "--min-p", "default": "", "hint": "Min-P sampling"},
+            {"key": "--repeat-penalty", "default": "", "hint": "Штраф за повторение"},
+            {"key": "--repeat-last-n", "default": "", "hint": "Окно повторов"},
+            {"key": "--seed", "default": "", "hint": "Seed генератора"},
+            {"key": "--flash-attn", "default": "auto", "choices": ["auto", "on", "off"], "hint": "Flash Attention (-fa)"},
+        ],
+    },
+]
+
+
+def build_default_cli_params():
+    params = {}
+    for group in CLI_PARAM_GROUPS:
+        for spec in group["params"]:
+            params[spec["key"]] = spec["default"]
+    return params
+
+
+CLI_LEGACY_ALIASES = {
+    "--prompt-file": "--file",
+}
+
+# Старые булевы значения tri-state параметров (--color/--flash-attn/
+# --reasoning раньше были чекбоксами) маппятся в on/off/auto: True —
+# явное "on", False — дефолтное поведение "auto" (флаг раньше просто
+# не передавался).
+CLI_BOOL_TRISTATE_KEYS = ("--color", "--flash-attn", "--reasoning")
+
+
+def normalize_loaded_cli_params(loaded_params):
+    if not isinstance(loaded_params, dict):
+        return {}
+    incoming = dict(loaded_params)
+    for old_key, new_key in CLI_LEGACY_ALIASES.items():
+        if old_key in incoming:
+            if new_key not in incoming:
+                incoming[new_key] = incoming.pop(old_key)
+            else:
+                incoming.pop(old_key, None)
+    for key in CLI_BOOL_TRISTATE_KEYS:
+        if isinstance(incoming.get(key), bool):
+            incoming[key] = "on" if incoming[key] else "auto"
+    normalized = {}
+    for group in CLI_PARAM_GROUPS:
+        for spec in group["params"]:
+            key = spec["key"]
+            default = spec["default"]
+            if key in incoming:
+                value = incoming[key]
+                if isinstance(default, bool):
+                    normalized[key] = bool(value)
+                else:
+                    normalized[key] = str(value)
+            else:
+                normalized[key] = default
+    return normalized
+
+
+# ================= llama-bench (замер производительности) =================
+# Отдельное окно по типу CLI: путь к бинарнику + модель берутся из полей
+# диалога, остальное — флаги llama-bench. Ключи используются длинные
+# (--n-prompt вместо -p и т.д.), bench принимает обе формы.
+# Значения могут быть списками через запятую (напр. "128,256") — bench
+# сам прогоняет все комбинации.
+
+BENCH_OUTPUT_CHOICES = ["md", "csv", "json", "jsonl", "sql"]
+
+BENCH_PARAM_GROUPS = [
+    {
+        "id": "bench_main",
+        "title": "Bench: Тест",
+        "expanded": True,
+        "hint": "Что замеряем: pp — обработка промпта, tg — генерация",
+        "params": [
+            {"key": "--n-prompt", "default": "512", "hint": "Промпт-токены pp (-p)"},
+            {"key": "--n-gen", "default": "128", "hint": "Генерация токенов tg (-n)"},
+            {"key": "-pg", "default": "", "hint": "Комбо-тест pp,tg (напр. 512,128)"},
+            {"key": "--n-depth", "default": "0", "hint": "Глубина контекста KV (-d)"},
+            {"key": "--repetitions", "default": "5", "hint": "Повторы каждого теста (-r)"},
+            {"key": "--output", "default": "md", "choices": BENCH_OUTPUT_CHOICES, "hint": "Формат вывода (-o)"},
+            {"key": "--progress", "default": False, "hint": "Индикатор прогресса"},
+            {"key": "--no-warmup", "default": False, "hint": "Пропустить warmup-прогоны"},
+            {"key": "--verbose", "default": False, "hint": "Подробный вывод (-v)"},
+        ],
+    },
+    {
+        "id": "bench_compute",
+        "title": "Bench: Вычисления",
+        "expanded": False,
+        "hint": "Потоки, GPU-слои, батчи — как у сервера",
+        "params": [
+            {"key": "--threads", "default": "", "hint": "Потоки CPU (-t)"},
+            {"key": "--n-gpu-layers", "default": "", "hint": "Слои на GPU (-ngl)"},
+            {"key": "--flash-attn", "default": "auto", "choices": ["auto", "on", "off"], "hint": "Flash Attention (-fa)"},
+            {"key": "--cache-type-k", "default": "", "choices": ["", "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "q8_1", "iq4_nl"], "hint": "Формат Key Cache (-ctk)"},
+            {"key": "--cache-type-v", "default": "", "choices": ["", "f32", "f16", "bf16", "q8_0", "q4_0", "q4_1", "q8_1", "iq4_nl"], "hint": "Формат Value Cache (-ctv)"},
+            {"key": "--batch-size", "default": "", "hint": "Размер batch (-b)"},
+            {"key": "--ubatch-size", "default": "", "hint": "Размер micro batch (-ub)"},
+            {"key": "--device", "default": "", "hint": "Устройство (CUDA0, Vulkan0…)"},
+            {"key": "--split-mode", "default": "", "hint": "Распределение между GPU (-sm)"},
+            {"key": "--no-kv-offload", "default": False, "hint": "Не переносить KV Cache на GPU"},
+        ],
+    },
+]
+
+
+def build_default_bench_params():
+    params = {}
+    for group in BENCH_PARAM_GROUPS:
+        for spec in group["params"]:
+            params[spec["key"]] = spec["default"]
+    return params
+
+
+BENCH_BOOL_TRISTATE_KEYS = ("--flash-attn",)
+
+
+def normalize_loaded_bench_params(loaded_params):
+    if not isinstance(loaded_params, dict):
+        return {}
+    incoming = dict(loaded_params)
+    for key in BENCH_BOOL_TRISTATE_KEYS:
+        if isinstance(incoming.get(key), bool):
+            incoming[key] = "on" if incoming[key] else "auto"
+    normalized = {}
+    for group in BENCH_PARAM_GROUPS:
+        for spec in group["params"]:
+            key = spec["key"]
+            default = spec["default"]
+            if key in incoming:
+                value = incoming[key]
+                if isinstance(default, bool):
+                    normalized[key] = bool(value)
+                else:
+                    normalized[key] = str(value)
+            else:
+                normalized[key] = default
+    return normalized
+
 
 def build_default_params():
     params = {}
@@ -269,6 +446,11 @@ def normalize_loaded_params(loaded_params):
             normalized["--load-mode"] = "none" if no_mmap else "auto"
     normalized.pop("--no-mmap", None)
     normalized.pop("--mlock", None)
+
+    # Миграция: --reasoning раньше был чекбоксом (bool) — маппим
+    # в tri-state on/off/auto: True — явное "on", False — "auto".
+    if isinstance(normalized.get("--reasoning"), bool):
+        normalized["--reasoning"] = "on" if normalized["--reasoning"] else "auto"
 
     device_value = normalized.get("--device", "")
     if device_value:
