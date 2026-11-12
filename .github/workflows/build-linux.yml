@@ -198,12 +198,23 @@ jobs:
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz \
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.deb \
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
-
-      - name: Upload Linux release
-        uses: actions/upload-artifact@v4
+            
+      - name: Upload Linux release (Gitea)
+        if: github.server_url == 'http://192.168.0.180:3000'
+        uses: https://github.com/christopherHX/gitea-upload-artifact@v4
         with:
           name: LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}
           path: |
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.deb
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
+
+      - name: Upload Linux release (GitHub)
+        if: github.server_url != 'http://192.168.0.180:3000'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}
+          path: |
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.tar.gz
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.deb
+            LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm      
