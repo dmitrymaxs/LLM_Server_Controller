@@ -1,7 +1,7 @@
 [Русский](#ru) | [English](#en)
 
 <a id="ru"></a>
-# LLM Server Controller v0.2.0
+# LLM Server Controller v0.2.1
 
 GUI-приложение для запуска и управления локальным LLM (Large Language Model) сервером на базе llama.cpp.
 
@@ -10,6 +10,8 @@ GUI-приложение для запуска и управления лока�
 - **Запуск / остановка / перезапуск** llama-server с графическим интерфейсом
 - **Встроенная установка** llama.cpp — скачивание бинарников с GitHub Releases автоматически
 - **Менеджер моделей** — вкладки «Локальные» / «HuggingFace»: просмотр `.gguf` в папке моделей, поиск по HuggingFace Hub (сортировка по лайкам / скачиваниям / обновлению), просмотр GGUF-файлов, скачивание с прогрессом и отменой, кнопка «Использовать» подставляет путь в поле «Модель» (меню **Файл → Модели…**)
+- **Запуск llama-cli** — диалог запуска интерактивного чата llama-cli во встроенном терминале: путь к бинарнику подставляется автоматически (рядом с llama-server), модель берётся из текущего поля «Модель», собственные группы параметров «CLI: Основные» и «CLI: Генерация» (промпт, контекст, интерактив/диалог, цветной вывод, детализация логов `-lv 4`, reasoning on/off/auto, сэмплинг), предпросмотр команды, кнопки «Запустить в терминале» / «Стоп» (меню **Файл → llama-cli…** или кнопка «CLI»)
+- **Замер llama-bench** — диалог запуска llama-bench: группы «Bench: Тест» (pp/tg токены, комбо-тест `-pg`, глубина KV, повторы, формат вывода md/csv/json/jsonl/sql) и «Bench: Вычисления» (потоки, GPU-слои, flash-attn, KV cache, батчи, устройство, split-mode); значения могут быть списками через запятую — bench сам прогоняет все комбинации; сохранение результата в `.txt`, история последних замеров (повторный вывод перед новым прогоном), опция запуска в отдельном окне консоли (меню **Файл → llama-bench…** или кнопка «Bench»)
 - **Встроенный терминал** — настоящая системная консоль в правой панели (Windows: cmd.exe встраивается через SetParent, Linux: `xterm -into`): работают интерактивные TUI-программы, кнопки «Новая консоль» / «Фокус» / «Закрыть», видимость — меню **Вид → Терминал**, выбор сохраняется
 - **Установка pi-агента** — меню **Файл → Установить pi-агента** (Windows: открывает отдельное окно PowerShell с командой `irm https://pi.dev/install.ps1 | iex`)
 - **Круговой индикатор статуса** — рядом со статусом: зелёный — работает, оранжевый — загружается, синий — остановлен
@@ -78,6 +80,42 @@ GUI-приложение для запуска и управления лока�
 - Вкладка **«Локальные»** — список `.gguf`-файлов папки (имя + размер), двойной клик или кнопка **«Использовать»** подставляет путь в поле «Модель», кнопка **«Открыть папку»** показывает файл в проводнике.
 - Вкладка **«HuggingFace»** — поиск моделей по HuggingFace Hub (запрос, сортировка по лайкам / скачиваниям / обновлению, лимит), список GGUF-файлов выбранной модели с размерами, кнопка **«Скачать»** с прогрессом и отменой (при существующем файле — запрос на перезапись, после скачивания — предложение использовать модель как текущую).
 
+### llama-cli (Файл → llama-cli…)
+
+Отдельное окно запуска llama-cli во встроенном терминале — интерактивный чат с моделью без поднятия сервера.
+
+- **Путь к llama-cli** — подставляется автоматически: каталог llama-server, папка установки llama.cpp или текущий каталог (поиск по подкаталогам); можно указать вручную («Обзор»). Выбор сохраняется в конфиге (`cli_path`).
+- **Модель** — по умолчанию берётся из поля «Модель» главного окна; можно выбрать другой `.gguf`-файл.
+- Параметры в двух группах:
+
+| Группа | Параметры |
+|-------|-----------|
+| **CLI: Основные** | `--prompt` (стартовый промпт), `--system-prompt`, `--file` (файл с промптом), `--ctx-size` (по умолчанию 4096), `--predict` (макс. новых токенов), `--threads`, `--n-gpu-layers`, `--device`, `--interactive` (-i), `--conversation` (-cnv), `--reverse-prompt` (-r), `--color` (auto/on/off), `-lv` с значением 4 (детализация логов), `--reasoning` (auto/on/off — reasoning/thinking в чате) |
+| **CLI: Генерация** | `--temp`, `--top-k`, `--top-p`, `--min-p`, `--repeat-penalty`, `--repeat-last-n`, `--seed`, `--flash-attn` (auto/on/off) |
+
+- **Команда** — живой предпросмотр итоговой строки llama-cli.
+- **Запустить в терминале** / **Стоп** — запуск и остановка; сессия взаимно исключается с llama-bench (запуск нового завершает предыдущую, с предупреждением).
+- При уже работающем llama-server выводится предупреждение, что llama-cli дополнительно займёт видеопамять.
+- Дополнительные аргументы — поле «Доп. аргументы» (`cli_custom_args`); настройки параметров сохраняются в конфиге (`cli_params`).
+
+### llama-bench (Файл → llama-bench…)
+
+Отдельное окно замера производительности llama-bench (пакетный прогон, не сервер).
+
+- **Путь к llama-bench** — автоподстановка как у llama-cli (`bench_path`); **модель** — из поля «Модель».
+- Параметры в двух группах:
+
+| Группа | Параметры |
+|-------|-----------|
+| **Bench: Тест** | `--n-prompt` (pp-токены, по умолчанию 512), `--n-gen` (tg-токены, по умолчанию 128), `-pg` (комбо-тест pp,tg), `--n-depth` (глубина контекста KV), `--repetitions` (по умолчанию 5), `--output` (md/csv/json/jsonl/sql), `--progress`, `--no-warmup`, `--verbose` |
+| **Bench: Вычисления** | `--threads`, `--n-gpu-layers`, `--flash-attn` (auto/on/off), `--cache-type-k/v`, `--batch-size`, `--ubatch-size`, `--device`, `--split-mode`, `--no-kv-offload` |
+
+- Значения `--n-prompt`, `--n-gen`, `--threads`, `--n-gpu-layers` и др. можно указывать списками через запятую (например `128,256`) — llama-bench сам прогонит все комбинации.
+- **Сохранить результат в .txt** — чекбокс с выбором папки и имени файла (авто-имя вида `llama-bench_<модель>_<дата-время>.txt`); при существующем файле — запрос на перезапись.
+- **История замеров** — последние сохранённые результаты (до 12 файлов) перед новым прогоном выводятся в терминал повторно.
+- **Запустить в отдельном окне** — если встроенный терминал пуст, bench можно открыть в отдельном окне консоли (Windows: PowerShell, Linux: системный shell); выбор сохраняется (`bench_ext_window`).
+- Взаимное исключение с llama-cli; кнопки **«Запустить в терминале»** / **«Стоп»**, статус завершения пишется в логи.
+
 ### Управление параметрами
 
 Параметры llama-server разделены на категории, которые можно переключать в боковой панели:
@@ -130,6 +168,8 @@ GUI-приложение для запуска и управления лока�
 | **Файл → Установить llama.cpp** | Запускает встроенную установку |
 | **Файл → Установить pi-агента** | Запускает установщик pi-агента в отдельном окне PowerShell (только Windows) |
 | **Файл → Устройства** | Показывает список GPU/CPU через `--list-devices` |
+| **Файл → llama-cli…** | Диалог запуска llama-cli во встроенном терминале |
+| **Файл → llama-bench…** | Диалог замера производительности llama-bench |
 | **Файл → Модели…** | Менеджер моделей: локальные `.gguf` + поиск и скачивание с HuggingFace |
 | **Параметры** | Переключение между группами параметров |
 | **Звуки** | Вкл/выкл звуковые сигналы при загрузке / остановке сервера |
@@ -184,6 +224,8 @@ curl http://localhost:18080/v1/chat/completions \
 
 - Путь к серверу и модели
 - Папка моделей (`models_dir`)
+- Путь и параметры llama-cli (`cli_path`, `cli_params`, `cli_custom_args`)
+- Путь и параметры llama-bench (`bench_path`, `bench_params`, `bench_custom_args`), сохранение результата (`bench_save_enabled`, `bench_save_dir`) и запуск в отдельном окне (`bench_ext_window`)
 - Язык интерфейса
 - Путь к каталогам установки llama.cpp
 - Размер окна приложения
@@ -206,7 +248,7 @@ curl http://localhost:18080/v1/chat/completions \
 ---
 
 <a id="en"></a>
-# LLM Server Controller v0.2.0
+# LLM Server Controller v0.2.1
 
 GUI application for launching and managing a local LLM (Large Language Model) server based on llama.cpp.
 
@@ -215,6 +257,8 @@ GUI application for launching and managing a local LLM (Large Language Model) se
 - **Start / Stop / Restart** llama-server with a graphical interface
 - **Built-in installation** of llama.cpp — automatically downloads binaries from GitHub Releases
 - **Model manager** — «Local» / «HuggingFace» tabs: browse `.gguf` files in the models folder, search HuggingFace Hub (sort by likes / downloads / updated), preview GGUF files, download with progress and cancel, «Use» button puts the path into the «Model» field (**File → Models…**)
+- **llama-cli launcher** — a dialog to run an interactive llama-cli chat in the built-in terminal: the binary path is filled in automatically (next to llama-server), the model is taken from the current «Model» field, its own parameter groups «CLI: Main» and «CLI: Generation» (prompt, context, interactive/conversation, color output, log verbosity `-lv 4`, reasoning on/off/auto, sampling), command preview, «Run in terminal» / «Stop» buttons (**File → llama-cli…** or the «CLI» button)
+- **llama-bench benchmark** — a dialog to run llama-bench: «Bench: Test» group (pp/tg tokens, combined `-pg` test, KV depth, repetitions, output format md/csv/json/jsonl/sql) and «Bench: Compute» group (threads, GPU layers, flash-attn, KV cache, batches, device, split-mode); values may be comma-separated lists — bench runs all combinations itself; saving the result to a `.txt` file, history of recent runs (replayed before a new run), option to run in a separate console window (**File → llama-bench…** or the «Bench» button)
 - **Built-in terminal** — a real OS console in the right panel (Windows: cmd.exe embedded via SetParent, Linux: `xterm -into`): interactive TUI programs work inside the panel, «New console» / «Focus» / «Close» buttons, visibility via **View → Terminal**, choice is saved
 - **Pi agent installation** — **File → Install pi agent** menu (Windows: opens a separate PowerShell window with `irm https://pi.dev/install.ps1 | iex`)
 - **Circular status badge** — next to the status: green — working, orange — loading, blue — stopped
@@ -283,6 +327,42 @@ Launch the application and in the menu **File → Install llama.cpp**, select th
 - **«Local»** tab — list of `.gguf` files in the folder (name + size), double-click or the **«Use»** button puts the path into the «Model» field, **«Open folder»** reveals the file in the file manager.
 - **«HuggingFace»** tab — search models on the HuggingFace Hub (query, sort by likes / downloads / updated, limit), list GGUF files of the selected model with sizes, **«Download»** button with progress and cancel (overwrite prompt for existing files, offer to use the downloaded model as current after download).
 
+### llama-cli (File → llama-cli…)
+
+A separate window to run llama-cli in the built-in terminal — an interactive chat with the model without starting the server.
+
+- **llama-cli path** — filled in automatically: llama-server directory, llama.cpp install folder or current directory (search in subfolders); you can also set it manually («Browse»). The choice is saved to the config (`cli_path`).
+- **Model** — taken from the «Model» field of the main window by default; you can pick a different `.gguf` file.
+- Parameters in two groups:
+
+| Group | Parameters |
+|-------|-------------|
+| **CLI: Main** | `--prompt` (initial prompt), `--system-prompt`, `--file` (prompt file), `--ctx-size` (default 4096), `--predict` (max new tokens), `--threads`, `--n-gpu-layers`, `--device`, `--interactive` (-i), `--conversation` (-cnv), `--reverse-prompt` (-r), `--color` (auto/on/off), `-lv` with value 4 (log verbosity), `--reasoning` (auto/on/off — reasoning/thinking in chat) |
+| **CLI: Generation** | `--temp`, `--top-k`, `--top-p`, `--min-p`, `--repeat-penalty`, `--repeat-last-n`, `--seed`, `--flash-attn` (auto/on/off) |
+
+- **Command** — a live preview of the final llama-cli command line.
+- **Run in terminal** / **Stop** — start and stop; the session is mutually exclusive with llama-bench (starting a new one terminates the previous one, with a warning).
+- If llama-server is already running, a warning is shown that llama-cli will additionally occupy VRAM.
+- Extra arguments — the «Extra args» field (`cli_custom_args`); parameter settings are saved to the config (`cli_params`).
+
+### llama-bench (File → llama-bench…)
+
+A separate window for the llama-bench performance benchmark (batch run, not a server).
+
+- **llama-bench path** — auto-detection like llama-cli (`bench_path`); **model** — from the «Model» field.
+- Parameters in two groups:
+
+| Group | Parameters |
+|-------|-------------|
+| **Bench: Test** | `--n-prompt` (pp tokens, default 512), `--n-gen` (tg tokens, default 128), `-pg` (combined pp,tg test), `--n-depth` (KV context depth), `--repetitions` (default 5), `--output` (md/csv/json/jsonl/sql), `--progress`, `--no-warmup`, `--verbose` |
+| **Bench: Compute** | `--threads`, `--n-gpu-layers`, `--flash-attn` (auto/on/off), `--cache-type-k/v`, `--batch-size`, `--ubatch-size`, `--device`, `--split-mode`, `--no-kv-offload` |
+
+- Values of `--n-prompt`, `--n-gen`, `--threads`, `--n-gpu-layers`, etc. may be comma-separated lists (e.g. `128,256`) — llama-bench runs all combinations itself.
+- **Save result to .txt** — a checkbox with folder and file name selection (auto name like `llama-bench_<model>_<date-time>.txt`); if the file exists, an overwrite prompt appears.
+- **Run history** — the most recent saved results (up to 12 files) are replayed into the terminal before a new run.
+- **Run in a separate window** — if the built-in terminal is blank, bench can be opened in a separate console window (Windows: PowerShell, Linux: system shell); the choice is saved (`bench_ext_window`).
+- Mutually exclusive with llama-cli; **«Run in terminal»** / **«Stop»** buttons, completion status is written to the logs.
+
 ### Parameter Configuration
 
 llama-server parameters are organized into categories, switchable in the side panel:
@@ -335,6 +415,8 @@ llama-server parameters are organized into categories, switchable in the side pa
 | **File → Install llama.cpp** | Triggers built-in installation |
 | **File → Install pi agent** | Starts the pi agent installer in a separate PowerShell window (Windows only) |
 | **File → Devices** | Lists GPUs/CPUs via `--list-devices` |
+| **File → llama-cli…** | Dialog to run llama-cli in the built-in terminal |
+| **File → llama-bench…** | Dialog to run the llama-bench performance benchmark |
 | **File → Models…** | Model manager: local `.gguf` files + search and download from HuggingFace |
 | **Parameters** | Switch between parameter groups |
 | **Sounds** | Enable/disable sound beeps on server load / stop |
@@ -389,6 +471,8 @@ Settings are saved to a JSON file `llama_config.json` in `%APPDATA%\LLM_Server_C
 
 - Server and model paths
 - Models folder (`models_dir`)
+- llama-cli path and parameters (`cli_path`, `cli_params`, `cli_custom_args`)
+- llama-bench path and parameters (`bench_path`, `bench_params`, `bench_custom_args`), result saving (`bench_save_enabled`, `bench_save_dir`) and separate-window launch (`bench_ext_window`)
 - Interface language
 - llama.cpp installation directories
 - Application window size
