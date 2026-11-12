@@ -200,7 +200,7 @@ jobs:
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
             
       - name: Upload Linux release (Gitea)
-        if: github.server_url == 'http://192.168.0.180:3000'
+        if: contains(github.server_url, '192.168.0.180:3000')
         uses: https://github.com/christopherHX/gitea-upload-artifact@v4
         with:
           name: LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}
@@ -210,7 +210,7 @@ jobs:
             LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}.rpm
 
       - name: Upload Linux release (GitHub)
-        if: github.server_url != 'http://192.168.0.180:3000'
+        if: !contains(github.server_url, '192.168.0.180:3000')
         uses: actions/upload-artifact@v4
         with:
           name: LLMServerController-Linux-v${{ steps.version.outputs.VERSION }}
