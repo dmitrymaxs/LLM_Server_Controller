@@ -25,24 +25,46 @@ jobs:
 
       - name: Determine version
         id: version
-        shell: bash
+        shell: powershell
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.0.0"
-          fi
-          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          $VERSION = "0.0.0"
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $VERSION = $env:GITHUB_REF_NAME -replace '^v', ''
+          }
+
+          [System.IO.File]::AppendAllText(
+            $env:GITHUB_OUTPUT,
+            "VERSION=$VERSION`n",
+            [System.Text.UTF8Encoding]::new($false)
+          )
 
       - name: Inject version into Windows spec
-        shell: bash
+        shell: powershell
+        env:
+          APP_VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          sed -i "s/APP_VERSION = '.*'/APP_VERSION = '${{ steps.version.outputs.VERSION }}'/" LLMServerController.spec
+          $content = [System.IO.File]::ReadAllText("LLMServerController.spec")
+          $content = $content -replace "APP_VERSION = '.*'", "APP_VERSION = '$env:APP_VERSION'"
+
+          [System.IO.File]::WriteAllText(
+            "LLMServerController.spec",
+            $content,
+            [System.Text.UTF8Encoding]::new($false)
+          )
 
       - name: Build application
         run: pyinstaller LLMServerController.spec
 
-      - name: Upload Windows build
+      - name: Upload Windows build (Gitea)
+        if: ${{ contains(github.server_url, '192.168.0.180:3000') }}
+        uses: christopherHX/gitea-upload-artifact@v4
+        with:
+          name: LLMServerController-Windows
+          path: dist/LLMServerController.exe
+
+      - name: Upload Windows build (GitHub)
+        if: ${{ !contains(github.server_url, '192.168.0.180:3000') }}
         uses: actions/upload-artifact@v4
         with:
           name: LLMServerController-Windows
