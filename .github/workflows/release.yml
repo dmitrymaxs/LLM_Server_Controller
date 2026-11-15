@@ -1,3 +1,4 @@
+
 name: Create GitHub Release
 
 on:
@@ -23,7 +24,7 @@ jobs:
         run: |
           RAW_TAG="${{ inputs.tag }}"
           CLEAN_TAG="${RAW_TAG#v}"
-          
+
           echo "TAG_WITH_V=v${CLEAN_TAG}" >> "$GITHUB_OUTPUT"
           echo "TAG_CLEAN=${CLEAN_TAG}" >> "$GITHUB_OUTPUT"
 
@@ -36,9 +37,21 @@ jobs:
         run: |
           echo "Looking for successful builds for tag: $TAG_WITH_V"
 
-          SHA=$(gh api \
+          TAG_OBJECT=$(gh api \
+            "repos/$REPO/git/ref/tags/$TAG_WITH_V" \
+            --jq '.object.type')
+
+          TAG_SHA=$(gh api \
             "repos/$REPO/git/ref/tags/$TAG_WITH_V" \
             --jq '.object.sha')
+
+          if [ "$TAG_OBJECT" = "tag" ]; then
+            SHA=$(gh api \
+              "repos/$REPO/git/tags/$TAG_SHA" \
+              --jq '.object.sha')
+          else
+            SHA="$TAG_SHA"
+          fi
 
           echo "Tag commit: $SHA"
 
